@@ -1,0 +1,520 @@
+{
+    "name": "Production Ecommerce Chatbot with Human Handoff",
+    "nodes": [
+        {
+            "parameters": {
+                "options": {
+                    "allowedOrigins": "*"
+                }
+            },
+            "id": "trigger-001",
+            "name": "When chat message received",
+            "type": "n8n-nodes-base.chatTrigger",
+            "typeVersion": 1.1,
+            "position": [
+                -400,
+                0
+            ],
+            "notes": "Entry point for all chat messages"
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO sessions (session_id, status, customer_name) VALUES ('{{ $json.sessionId }}', 'ai', '{{ $json.customerName || \"Guest\" }}') ON CONFLICT (session_id) DO UPDATE SET updated_at = NOW() RETURNING *"
+            },
+            "id": "session-upsert-001",
+            "name": "Upsert Session",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                -200,
+                0
+            ],
+            "notes": "Creates session if not exists, updates timestamp if exists",
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (session_id, sender, content) VALUES ('{{ $json.sessionId }}', 'user', '{{ $json.chatInput.replace(/'/g, \"''\") }}')"
+            },
+            "id": "log-user-msg-001",
+            "name": "Log User Message",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                0,
+                0
+            ],
+            "notes": "Logs incoming user message to database",
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "SELECT status FROM sessions WHERE session_id = '{{ $json.sessionId }}' LIMIT 1"
+            },
+            "id": "check-status-001",
+            "name": "Check Session Status",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                200,
+                0
+            ],
+            "notes": "Determines if session is in AI or Human mode"
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": false
+                    },
+                    "conditions": [
+                        {
+                            "leftValue": "={{ $json.status }}",
+                            "rightValue": "human",
+                            "operator": {
+                                "type": "string",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                }
+            },
+            "id": "router-001",
+            "name": "Route by Status",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                400,
+                0
+            ],
+            "notes": "Routes to Human queue or AI Agent"
+        },
+        {
+            "parameters": {
+                "promptType": "define",
+                "text": "={{ $('Log User Message').first().json.chatInput || $json.chatInput }}",
+                "options": {
+                    "systemMessage": "You are a professional, friendly ecommerce assistant for 'Momo House', a popular Nepali momo restaurant.\n\n## Your Responsibilities:\n1. Help customers with menu items, prices, nutritional info, and recommendations\n2. Assist with order status, delivery times, and location queries\n3. Handle complaints professionally and offer solutions\n4. Collect feedback and suggestions\n\n## Menu Knowledge:\n- Steam Momo (Veg/Chicken/Buff): NPR 150-250\n- Fried Momo (Veg/Chicken/Buff): NPR 180-280\n- Jhol Momo (Veg/Chicken/Buff): NPR 200-300\n- C-Momo (Veg/Chicken/Buff): NPR 220-320\n- Kothey Momo (Veg/Chicken/Buff): NPR 200-300\n\n## Locations:\n- Thamel: Open 10AM-10PM\n- Lalitpur: Open 11AM-9PM\n- Bhaktapur: Open 11AM-8PM\n\n## Important Rules:\n- Be concise but helpful (max 2-3 sentences per response)\n- If asked about topics outside food/restaurant, politely redirect\n- If the customer is frustrated or requests human help, immediately use the 'request_human_agent' tool\n- For complex complaints or refund requests, use 'request_human_agent' tool\n- Always be polite and use a warm, friendly tone\n- End each response with a helpful follow-up question when appropriate",
+                    "maxIterations": 5,
+                    "returnIntermediateSteps": false
+                }
+            },
+            "id": "ai-agent-001",
+            "name": "AI Agent",
+            "type": "@n8n/n8n-nodes-langchain.agent",
+            "typeVersion": 1.7,
+            "position": [
+                600,
+                100
+            ],
+            "notes": "Main AI agent with ecommerce context"
+        },
+        {
+            "parameters": {
+                "model": "gpt-4o-mini",
+                "options": {
+                    "temperature": 0.7,
+                    "maxTokens": 500,
+                    "timeout": 30000
+                }
+            },
+            "id": "openai-model-001",
+            "name": "OpenAI Chat Model",
+            "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+            "typeVersion": 1.2,
+            "position": [
+                540,
+                300
+            ],
+            "notes": "GPT-4o-mini for cost-effective responses"
+        },
+        {
+            "parameters": {
+                "sessionIdOption": "customKey",
+                "sessionKey": "={{ $('When chat message received').first().json.sessionId }}",
+                "contextWindowLength": 10
+            },
+            "id": "memory-001",
+            "name": "Buffer Memory",
+            "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+            "typeVersion": 1.3,
+            "position": [
+                760,
+                300
+            ],
+            "notes": "Maintains conversation context (10 messages)"
+        },
+        {
+            "parameters": {
+                "name": "request_human_agent",
+                "description": "Use this tool when: 1) The customer explicitly asks to speak with a human, 2) The customer is frustrated or angry, 3) There's a complex complaint or refund request, 4) You cannot answer the question after 2 attempts. When calling this tool, provide a brief summary of the issue."
+            },
+            "id": "handoff-tool-001",
+            "name": "Human Handoff Tool",
+            "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+            "typeVersion": 1.2,
+            "position": [
+                600,
+                -100
+            ],
+            "notes": "Tool for AI to request human intervention"
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "UPDATE sessions SET status = 'human', summary = '{{ $json.summary || \"Customer requested human assistance\" }}' WHERE session_id = '{{ $('When chat message received').first().json.sessionId }}'"
+            },
+            "id": "mark-human-001",
+            "name": "Mark as Human Mode",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                800,
+                -100
+            ],
+            "notes": "Updates session status to human",
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "respondWith": "text",
+                "responseText": "I understand you'd like to speak with a human agent. I've notified our support team and someone will be with you shortly. Please hold on for a moment."
+            },
+            "id": "handoff-response-001",
+            "name": "Handoff Response",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1000,
+                -100
+            ],
+            "notes": "Sends confirmation to user about handoff"
+        },
+        {
+            "parameters": {
+                "respondWith": "text",
+                "responseText": "A support agent is reviewing your message. Please wait a moment for their response."
+            },
+            "id": "human-queue-response-001",
+            "name": "Human Queue Response",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                600,
+                -200
+            ],
+            "notes": "Response when session is in human mode"
+        },
+        {
+            "parameters": {
+                "operation": "executeQuery",
+                "query": "INSERT INTO messages (session_id, sender, content) VALUES ('{{ $('When chat message received').first().json.sessionId }}', 'ai', '{{ $json.output.replace(/'/g, \"''\") }}')"
+            },
+            "id": "log-ai-msg-001",
+            "name": "Log AI Response",
+            "type": "n8n-nodes-base.postgres",
+            "typeVersion": 2.5,
+            "position": [
+                800,
+                100
+            ],
+            "notes": "Logs AI response to database",
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "content": "={{ $('AI Agent').first().json.output }}",
+                "options": {}
+            },
+            "id": "respond-ai-001",
+            "name": "Respond with AI Output",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1000,
+                100
+            ],
+            "notes": "Sends AI response back to chat"
+        },
+        {
+            "parameters": {
+                "values": {
+                    "string": [
+                        {
+                            "name": "error",
+                            "value": "We're experiencing technical difficulties. Please try again in a moment."
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "error-handler-001",
+            "name": "Error Handler",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                800,
+                300
+            ],
+            "notes": "Fallback error message"
+        },
+        {
+            "parameters": {
+                "respondWith": "text",
+                "responseText": "={{ $json.error }}"
+            },
+            "id": "error-response-001",
+            "name": "Error Response",
+            "type": "n8n-nodes-base.respondToWebhook",
+            "typeVersion": 1.1,
+            "position": [
+                1000,
+                300
+            ],
+            "notes": "Sends error message to user"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://api:3001/api/messages",
+                "sendBody": true,
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "sessionId",
+                            "value": "={{ $json.session_id || $('When chat message received').first().json.sessionId }}"
+                        },
+                        {
+                            "name": "sender",
+                            "value": "user"
+                        },
+                        {
+                            "name": "content",
+                            "value": "={{ $('When chat message received').first().json.chatInput }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "notify-api-user-001",
+            "name": "Notify API (User)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                100,
+                -100
+            ],
+            "notes": "Sends real-time notification to dashboard via API"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://api:3001/api/messages",
+                "sendBody": true,
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "name": "sessionId",
+                            "value": "={{ $('When chat message received').first().json.sessionId }}"
+                        },
+                        {
+                            "name": "sender",
+                            "value": "ai"
+                        },
+                        {
+                            "name": "content",
+                            "value": "={{ $json.output || $('AI Agent').first().json.output }}"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "notify-api-ai-001",
+            "name": "Notify API (AI)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                900,
+                200
+            ],
+            "notes": "Sends real-time notification of AI response to dashboard"
+        }
+    ],
+    "connections": {
+        "When chat message received": {
+            "main": [
+                [
+                    {
+                        "node": "Upsert Session",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Upsert Session": {
+            "main": [
+                [
+                    {
+                        "node": "Log User Message",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Log User Message": {
+            "main": [
+                [
+                    {
+                        "node": "Check Session Status",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Notify API (User)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Check Session Status": {
+            "main": [
+                [
+                    {
+                        "node": "Route by Status",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Route by Status": {
+            "main": [
+                [
+                    {
+                        "node": "Human Queue Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "AI Agent",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "OpenAI Chat Model": {
+            "ai_languageModel": [
+                [
+                    {
+                        "node": "AI Agent",
+                        "type": "ai_languageModel",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Buffer Memory": {
+            "ai_memory": [
+                [
+                    {
+                        "node": "AI Agent",
+                        "type": "ai_memory",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Human Handoff Tool": {
+            "ai_tool": [
+                [
+                    {
+                        "node": "AI Agent",
+                        "type": "ai_tool",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI Agent": {
+            "main": [
+                [
+                    {
+                        "node": "Log AI Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Log AI Response": {
+            "main": [
+                [
+                    {
+                        "node": "Respond with AI Output",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Notify API (AI)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Mark as Human Mode": {
+            "main": [
+                [
+                    {
+                        "node": "Handoff Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Error Handler": {
+            "main": [
+                [
+                    {
+                        "node": "Error Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "settings": {
+        "executionOrder": "v1",
+        "saveManualExecutions": true,
+        "callerPolicy": "workflowsFromSameOwner",
+        "errorWorkflow": ""
+    },
+    "staticData": null,
+    "pinData": {},
+    "versionId": "production-v1.0",
+    "triggerCount": 0,
+    "tags": [
+        {
+            "name": "production",
+            "createdAt": "2026-01-31T10:00:00.000Z",
+            "updatedAt": "2026-01-31T10:00:00.000Z"
+        },
+        {
+            "name": "chatbot",
+            "createdAt": "2026-01-31T10:00:00.000Z",
+            "updatedAt": "2026-01-31T10:00:00.000Z"
+        }
+    ]
+}
