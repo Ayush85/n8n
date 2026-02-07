@@ -11,7 +11,7 @@ const { Pool } = pg;
 
 const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 
 // Serve widget files
 app.use('/widget', express.static('widget'));
@@ -50,10 +50,75 @@ app.get('/health', (req, res) => {
 // N8N Webhook URL (from environment or default)
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/b5ecaafa-5b1f-483f-b03e-4275a31bdb0a/chat';
 
+// Human handoff detection phrases
+const HUMAN_HANDOFF_PHRASES = [
+    'chat with human',
+    'talk to human',
+    'speak with human',
+    'human agent',
+    'real person',
+    'live agent',
+    'customer support',
+    'talk to someone',
+    'speak to someone',
+    'human support',
+    'connect to human',
+    'transfer to human'
+];
+
+// Check if message requests human handoff
+function isHumanHandoffRequest(message) {
+    const lowerMessage = message.toLowerCase();
+    return HUMAN_HANDOFF_PHRASES.some(phrase => lowerMessage.includes(phrase));
+}
+
 // Proxy endpoint for n8n AI chat (avoids CORS issues)
 app.post('/api/chat', async (req, res, next) => {
     try {
         const { action, sessionId, chatInput, metadata } = req.body;
+
+        logger.info(`Proxying chat request to n8n for session ${sessionId}`);
+
+        // Check if user wants to chat with human
+        if (isHumanHandoffRequest(chatInput)) {
+            logger.info(`Human handoff requested for session ${sessionId}`);
+            
+            const handoffMessage = "Thank you for reaching out! Our support team has been notified and will connect with you within 30 minutes. Please stay in the chat, and we'll be with you shortly! 🙋‍♂️";
+            
+            // Update session status to 'human'
+            await pool.query(
+                "UPDATE sessions SET status = 'human', updated_at = NOW() WHERE session_id = $1",
+                [sessionId]
+            );
+
+            // Save the AI handoff response to database
+            await pool.query(
+                'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
+                [sessionId, 'ai', handoffMessage]
+            );
+
+            // Notify via socket
+            io.to(sessionId).emit('status_change', { sessionId, status: 'human' });
+            io.emit('session_update', { sessionId, status: 'human' });
+            
+            // Emit the AI message to socket
+            io.to(sessionId).emit('new_message', {
+                sessionId,
+                sender: 'ai',
+                content: handoffMessage,
+                timestamp: new Date()
+            });
+
+            // Return human handoff response
+            return res.json({ 
+                output: handoffMessage,
+                handoff: true,
+                saved: true,  // Tell widget not to save again
+                status: 'human'
+            });
+        }
+
+        // Forward request to n8n webhook
 
         logger.info(`Proxying chat request to n8n for session ${sessionId}`);
 
@@ -102,20 +167,20 @@ app.post('/api/messages', async (req, res, next) => {
         // Merge IP into metadata
         const enrichedMetadata = { ...metadata, ip_address: clientIp };
 
-        // 1. Save message to database
-        await pool.query(
-            'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
-            [sessionId, sender, content]
-        );
-
-        // 2. Ensure session exists and update metadata
+        // 1. Ensure session exists FIRST (before inserting message due to foreign key constraint)
         await pool.query(
             `INSERT INTO sessions (session_id, status, metadata) 
              VALUES ($1, $2, $3) 
              ON CONFLICT (session_id) DO UPDATE SET 
                 updated_at = NOW(),
                 metadata = COALESCE(sessions.metadata, '{}')::jsonb || $3::jsonb`,
-            [sessionId, 'human', JSON.stringify(enrichedMetadata)]
+            [sessionId, 'ai', JSON.stringify(enrichedMetadata)]
+        );
+
+        // 2. Save message to database
+        await pool.query(
+            'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
+            [sessionId, sender, content]
         );
 
         // 3. Emit to socket room for this session
@@ -183,6 +248,26 @@ app.get('/api/sessions/:sessionId', async (req, res, next) => {
     }
 });
 
+// Update session status
+app.put('/api/sessions/:sessionId/status', async (req, res, next) => {
+    const { sessionId } = req.params;
+    const { status } = req.body;
+    try {
+        await pool.query(
+            'UPDATE sessions SET status = $1, updated_at = NOW() WHERE session_id = $2',
+            [status, sessionId]
+        );
+
+        // Notify all clients about status change
+        io.to(sessionId).emit('status_change', { sessionId, status });
+
+        res.json({ success: true });
+    } catch (error) {
+        next(error);
+    }
+});
+
+
 // Global Error Handler
 app.use((err, req, res, next) => {
     if (err.name === 'ZodError') {
@@ -224,6 +309,9 @@ io.on('connection', (socket) => {
                 "UPDATE sessions SET status = 'human', updated_at = NOW() WHERE session_id = $1",
                 [sessionId]
             );
+
+            // Notify all clients about status change
+            io.to(sessionId).emit('status_change', { sessionId, status: 'human' });
 
             logger.info(`Admin reply sent to ${sessionId}`);
         } catch (error) {

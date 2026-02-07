@@ -5,10 +5,11 @@
     const CONFIG = {
         API_URL: window.N8N_CHAT_API_URL || 'http://localhost:3001',
         N8N_WEBHOOK_URL: window.N8N_CHAT_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/b5ecaafa-5b1f-483f-b03e-4275a31bdb0a/chat',
-        CLIENT_ID: window.N8N_CHAT_CLIENT_ID || 'default',
-        SITE_NAME: window.N8N_CHAT_SITE_NAME || document.title || 'Support Chat',
+        CLIENT_ID: window.N8N_CHAT_CLIENT_ID || '8848',
+        SITE_NAME: window.N8N_CHAT_SITE_NAME || '8848 Momo House',
         PRIMARY_COLOR: window.N8N_CHAT_PRIMARY_COLOR || '#2563eb',
         SOCKET_IO_CDN: 'https://cdn.socket.io/4.7.2/socket.io.min.js',
+        MARKED_CDN: 'https://cdn.jsdelivr.net/npm/marked/marked.min.js',
     };
 
     // ============================================
@@ -211,6 +212,14 @@
         }
         .n8n-mode-ai { background: rgba(16, 185, 129, 0.2); color: #059669; }
         .n8n-mode-human { background: rgba(239, 68, 68, 0.2); color: #dc2626; }
+
+        /* Markdown Styles */
+        .n8n-msg p { margin: 0 0 8px 0; }
+        .n8n-msg p:last-child { margin-bottom: 0; }
+        .n8n-msg strong { font-weight: 700; }
+        .n8n-msg ul, .n8n-msg ol { margin: 8px 0; padding-left: 20px; }
+        .n8n-msg li { margin-bottom: 4px; }
+        .n8n-msg h1, .n8n-msg h2, .n8n-msg h3 { font-size: 1.1em; margin: 12px 0 8px 0; font-weight: 700; }
     `;
 
     // ============================================
@@ -279,7 +288,13 @@
         removeTypingIndicator();
         const msgDiv = document.createElement('div');
         msgDiv.className = `n8n-msg n8n-msg-${sender}`;
-        msgDiv.innerText = content;
+
+        if (typeof marked !== 'undefined' && sender !== 'user') {
+            msgDiv.innerHTML = marked.parse(content);
+        } else {
+            msgDiv.innerText = content;
+        }
+
         chatMessages.appendChild(msgDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
@@ -309,9 +324,12 @@
         if (typing) typing.remove();
     }
 
-    function setMode(mode) {
+    async function setMode(mode, syncToServer = false) {
+        if (sessionMode === mode && !syncToServer) return;
+
         sessionMode = mode;
         localStorage.setItem('n8n_chat_mode', mode);
+
         if (mode === 'human') {
             modeBadge.textContent = 'HUMAN';
             modeBadge.className = 'n8n-mode-badge n8n-mode-human';
@@ -320,6 +338,18 @@
             modeBadge.textContent = 'AI';
             modeBadge.className = 'n8n-mode-badge n8n-mode-ai';
             statusText.textContent = 'Online • Ready to help';
+        }
+
+        if (syncToServer) {
+            try {
+                await fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}/status`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: mode })
+                });
+            } catch (err) {
+                console.error('Failed to sync mode to server:', err);
+            }
         }
     }
 
@@ -364,7 +394,11 @@
                     action: 'sendMessage',
                     sessionId: sessionId,
                     chatInput: message,
-                    metadata: getMetadata()
+                    metadata: {
+                        client_id: CONFIG.CLIENT_ID,
+                        site_name: CONFIG.SITE_NAME,
+                        ...getMetadata()
+                    }
                 })
             });
 
@@ -418,6 +452,10 @@
         // Save user message to database
         await saveMessageToDB('user', content);
 
+        // Check if user wants to chat with human
+        const humanPhrases = ['chat with human', 'talk to human', 'speak with human', 'human agent', 'real person', 'live agent', 'talk to someone', 'human support'];
+        const wantsHuman = humanPhrases.some(phrase => content.toLowerCase().includes(phrase));
+
         if (sessionMode === 'ai') {
             // AI MODE: Send to n8n webhook
             showTypingIndicator();
@@ -426,32 +464,18 @@
                 removeTypingIndicator();
 
                 if (aiResponse && aiResponse.output) {
-                    // Check for human handoff signals
-                    const handoffPhrases = [
-                        'speak with a human',
-                        'human agent',
-                        'notified our support team',
-                        'someone will be with you',
-                        'transferring you',
-                        'connecting you to',
-                        'human support',
-                        'live agent'
-                    ];
-
-                    const isHandoff = handoffPhrases.some(phrase =>
-                        aiResponse.output.toLowerCase().includes(phrase.toLowerCase())
-                    );
-
                     // Display AI response
                     addMessage('ai', aiResponse.output);
 
-                    // Save AI response to database
-                    await saveMessageToDB('ai', aiResponse.output);
+                    // Save AI response to database only if not already saved by API
+                    if (!aiResponse.saved) {
+                        await saveMessageToDB('ai', aiResponse.output);
+                    }
 
-                    // Switch to human mode if handoff detected
-                    if (isHandoff) {
-                        setMode('human');
-                        addSystemMessage('🔄 Switching to human support...');
+                    // Check if this is a human handoff response
+                    if (aiResponse.handoff || wantsHuman) {
+                        setMode('human', true); // Sync to server
+                        addSystemMessage('🔄 Switched to human support mode. Our team will respond shortly!');
                     }
                 } else {
                     throw new Error('Invalid AI response');
@@ -496,17 +520,29 @@
         fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}`)
             .then(res => res.json())
             .then(session => {
-                if (session && session.status === 'human') {
-                    setMode('human');
+                if (session && session.status) {
+                    setMode(session.status);
+                } else {
+                    setMode('ai'); // Default for new sessions
                 }
             })
-            .catch(() => { });
+            .catch(() => {
+                setMode('ai');
+            });
+
+        // Listen for status changes (e.g. from admin)
+        socket.on('status_change', (data) => {
+            if (data.sessionId === sessionId) {
+                setMode(data.status);
+            }
+        });
 
         // Listen for new messages (from human agents)
         socket.on('new_message', (msg) => {
             if (msg.sessionId === sessionId && msg.sender === 'admin') {
                 addMessage('admin', msg.content);
                 statusText.textContent = 'Agent replied • Connected';
+                setMode('human'); // Automatically switch to human mode if admin replies
             }
         });
     }
@@ -518,12 +554,32 @@
     chatClose.onclick = () => chatWindow.classList.remove('open');
 
     // ============================================
-    // LOAD SOCKET.IO AND INITIALIZE
+    // LOAD DEPENDENCIES AND INITIALIZE
     // ============================================
-    const script = document.createElement('script');
-    script.src = CONFIG.SOCKET_IO_CDN;
-    script.onload = initSocket;
-    document.head.appendChild(script);
+    function loadScripts(urls, callback) {
+        let loaded = 0;
+        urls.forEach(url => {
+            const script = document.createElement('script');
+            script.src = url;
+            script.onload = () => {
+                loaded++;
+                if (loaded === urls.length) callback();
+            };
+            document.head.appendChild(script);
+        });
+    }
+
+    loadScripts([CONFIG.SOCKET_IO_CDN, CONFIG.MARKED_CDN], () => {
+        initSocket();
+
+        // Configure marked to be safe
+        if (typeof marked !== 'undefined') {
+            marked.setOptions({
+                breaks: true,
+                gfm: true
+            });
+        }
+    });
 
     // Initialize mode display
     setMode(sessionMode);
