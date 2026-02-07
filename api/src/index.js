@@ -267,6 +267,212 @@ app.put('/api/sessions/:sessionId/status', async (req, res, next) => {
     }
 });
 
+// ============================================
+// ANALYTICS ENDPOINTS
+// ============================================
+
+// Get overall analytics
+app.get('/api/analytics', async (req, res, next) => {
+    try {
+        // Total sessions
+        const totalSessions = await pool.query('SELECT COUNT(*) as count FROM sessions');
+        
+        // Total messages
+        const totalMessages = await pool.query('SELECT COUNT(*) as count FROM messages');
+        
+        // Messages by sender type
+        const messagesBySender = await pool.query(`
+            SELECT sender, COUNT(*) as count 
+            FROM messages 
+            GROUP BY sender 
+            ORDER BY count DESC
+        `);
+        
+        // Active sessions (messages in last 24 hours)
+        const activeSessions = await pool.query(`
+            SELECT COUNT(DISTINCT session_id) as count 
+            FROM messages 
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+        `);
+        
+        // Sessions by status
+        const sessionsByStatus = await pool.query(`
+            SELECT status, COUNT(*) as count 
+            FROM sessions 
+            GROUP BY status
+        `);
+        
+        // Messages per day (last 7 days)
+        const messagesPerDay = await pool.query(`
+            SELECT DATE(created_at) as date, COUNT(*) as count 
+            FROM messages 
+            WHERE created_at > NOW() - INTERVAL '7 days'
+            GROUP BY DATE(created_at) 
+            ORDER BY date DESC
+        `);
+        
+        // Average messages per session
+        const avgMessagesPerSession = await pool.query(`
+            SELECT AVG(msg_count)::numeric(10,2) as avg 
+            FROM (SELECT session_id, COUNT(*) as msg_count FROM messages GROUP BY session_id) as subq
+        `);
+        
+        // Peak hours (messages grouped by hour)
+        const peakHours = await pool.query(`
+            SELECT EXTRACT(HOUR FROM created_at) as hour, COUNT(*) as count 
+            FROM messages 
+            GROUP BY EXTRACT(HOUR FROM created_at) 
+            ORDER BY count DESC 
+            LIMIT 5
+        `);
+
+        // Response time metrics (time between user message and admin/ai reply)
+        const avgResponseTime = await pool.query(`
+            WITH user_messages AS (
+                SELECT session_id, created_at as user_time, 
+                       ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_at) as rn
+                FROM messages WHERE sender = 'user'
+            ),
+            responses AS (
+                SELECT session_id, created_at as response_time, sender,
+                       ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_at) as rn
+                FROM messages WHERE sender IN ('admin', 'ai')
+            )
+            SELECT 
+                AVG(EXTRACT(EPOCH FROM (r.response_time - u.user_time)))::numeric(10,2) as avg_seconds
+            FROM user_messages u
+            JOIN responses r ON u.session_id = r.session_id AND r.rn = u.rn
+            WHERE r.response_time > u.user_time
+        `);
+
+        res.json({
+            totalSessions: parseInt(totalSessions.rows[0].count),
+            totalMessages: parseInt(totalMessages.rows[0].count),
+            activeSessions24h: parseInt(activeSessions.rows[0].count),
+            messagesBySender: messagesBySender.rows,
+            sessionsByStatus: sessionsByStatus.rows,
+            messagesPerDay: messagesPerDay.rows,
+            avgMessagesPerSession: parseFloat(avgMessagesPerSession.rows[0]?.avg || 0),
+            peakHours: peakHours.rows,
+            avgResponseTimeSeconds: parseFloat(avgResponseTime.rows[0]?.avg_seconds || 0)
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Get message summary for a specific session
+app.get('/api/sessions/:sessionId/summary', async (req, res, next) => {
+    const { sessionId } = req.params;
+    try {
+        // Get all messages for the session
+        const messages = await pool.query(
+            'SELECT * FROM messages WHERE session_id = $1 ORDER BY created_at ASC',
+            [sessionId]
+        );
+        
+        // Get session info
+        const session = await pool.query(
+            'SELECT * FROM sessions WHERE session_id = $1',
+            [sessionId]
+        );
+        
+        if (session.rows.length === 0) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+        
+        const userMessages = messages.rows.filter(m => m.sender === 'user');
+        const aiMessages = messages.rows.filter(m => m.sender === 'ai');
+        const adminMessages = messages.rows.filter(m => m.sender === 'admin');
+        
+        // Calculate session duration
+        let sessionDuration = 0;
+        if (messages.rows.length > 1) {
+            const firstMsg = new Date(messages.rows[0].created_at);
+            const lastMsg = new Date(messages.rows[messages.rows.length - 1].created_at);
+            sessionDuration = Math.round((lastMsg - firstMsg) / 1000); // in seconds
+        }
+        
+        // Extract keywords from user messages (simple word frequency)
+        const wordCounts = {};
+        const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare', 'ought', 'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'between', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'just', 'and', 'but', 'if', 'or', 'because', 'until', 'while', 'this', 'that', 'these', 'those', 'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'you', 'your', 'yours', 'he', 'him', 'his', 'she', 'her', 'hers', 'it', 'its', 'they', 'them', 'their', 'what', 'which', 'who', 'whom']);
+        
+        userMessages.forEach(msg => {
+            const words = msg.content.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/);
+            words.forEach(word => {
+                if (word.length > 2 && !stopWords.has(word)) {
+                    wordCounts[word] = (wordCounts[word] || 0) + 1;
+                }
+            });
+        });
+        
+        const topKeywords = Object.entries(wordCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 10)
+            .map(([word, count]) => ({ word, count }));
+        
+        res.json({
+            sessionId,
+            status: session.rows[0].status,
+            metadata: session.rows[0].metadata,
+            createdAt: session.rows[0].created_at,
+            updatedAt: session.rows[0].updated_at,
+            stats: {
+                totalMessages: messages.rows.length,
+                userMessages: userMessages.length,
+                aiMessages: aiMessages.length,
+                adminMessages: adminMessages.length,
+                sessionDurationSeconds: sessionDuration
+            },
+            topKeywords,
+            userMessagesList: userMessages.map(m => ({
+                content: m.content,
+                timestamp: m.created_at
+            })),
+            chatHistory: messages.rows.map(m => ({
+                sender: m.sender,
+                content: m.content,
+                timestamp: m.created_at
+            }))
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Get top user queries across all sessions
+app.get('/api/analytics/top-queries', async (req, res, next) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        
+        // Get recent user messages
+        const result = await pool.query(`
+            SELECT content, created_at, session_id 
+            FROM messages 
+            WHERE sender = 'user' 
+            ORDER BY created_at DESC 
+            LIMIT 100
+        `);
+        
+        // Extract and count common phrases/questions
+        const queryCounts = {};
+        result.rows.forEach(row => {
+            const content = row.content.toLowerCase().trim();
+            if (content.length > 5) {
+                queryCounts[content] = (queryCounts[content] || 0) + 1;
+            }
+        });
+        
+        const topQueries = Object.entries(queryCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, limit)
+            .map(([query, count]) => ({ query, count }));
+        
+        res.json({ topQueries, totalUserMessages: result.rows.length });
+    } catch (error) {
+        next(error);
+    }
+});
 
 // Global Error Handler
 app.use((err, req, res, next) => {

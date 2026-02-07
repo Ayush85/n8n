@@ -11,7 +11,20 @@ import {
     CheckCheck,
     Paperclip,
     Smile,
-    Sidebar as SidebarIcon
+    Sidebar as SidebarIcon,
+    BarChart3,
+    TrendingUp,
+    Users,
+    MessageCircle,
+    Activity,
+    Zap,
+    X,
+    ChevronRight,
+    Hash,
+    FileText,
+    Bot,
+    Timer,
+    Tag
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -25,6 +38,13 @@ function App() {
     const [socket, setSocket] = useState(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [currentView, setCurrentView] = useState('chats'); // 'chats' or 'analytics'
+    const [analytics, setAnalytics] = useState(null);
+    const [sessionSummary, setSessionSummary] = useState(null);
+    const [topQueries, setTopQueries] = useState([]);
+    const [showSessionSummary, setShowSessionSummary] = useState(false);
+    const [allSessionSummaries, setAllSessionSummaries] = useState([]);
+    const [loadingSessionSummaries, setLoadingSessionSummaries] = useState(false);
     const messagesEndRef = useRef(null);
 
     // Initialize Socket (only once on mount)
@@ -76,9 +96,89 @@ function App() {
         }
     };
 
+    // Fetch Analytics
+    const fetchAnalytics = async () => {
+        try {
+            const res = await fetch(`${SOCKET_URL}/api/analytics`);
+            const data = await res.json();
+            setAnalytics(data);
+        } catch (err) {
+            console.error('Error fetching analytics:', err);
+        }
+    };
+
+    // Fetch Top Queries
+    const fetchTopQueries = async () => {
+        try {
+            const res = await fetch(`${SOCKET_URL}/api/analytics/top-queries?limit=10`);
+            const data = await res.json();
+            setTopQueries(data.topQueries || []);
+        } catch (err) {
+            console.error('Error fetching top queries:', err);
+        }
+    };
+
+    // Fetch Session Summary
+    const fetchSessionSummary = async (sessionId) => {
+        try {
+            const res = await fetch(`${SOCKET_URL}/api/sessions/${sessionId}/summary`);
+            const data = await res.json();
+            setSessionSummary(data);
+        } catch (err) {
+            console.error('Error fetching session summary:', err);
+        }
+    };
+
+    // Fetch All Session Summaries for Analytics
+    const fetchAllSessionSummaries = async () => {
+        setLoadingSessionSummaries(true);
+        try {
+            // Get all sessions first
+            const sessionsRes = await fetch(`${SOCKET_URL}/api/sessions`);
+            const sessionsData = await sessionsRes.json();
+            
+            // Fetch summary for each session (limit to recent 20 for performance)
+            const recentSessions = sessionsData.slice(0, 20);
+            const summaries = await Promise.all(
+                recentSessions.map(async (session) => {
+                    try {
+                        const res = await fetch(`${SOCKET_URL}/api/sessions/${session.session_id}/summary`);
+                        const summary = await res.json();
+                        return { 
+                            ...summary, 
+                            last_message_at: session.last_message_at,
+                            customer_name: session.customer_name
+                        };
+                    } catch {
+                        return null;
+                    }
+                })
+            );
+            setAllSessionSummaries(summaries.filter(s => s !== null));
+        } catch (err) {
+            console.error('Error fetching all session summaries:', err);
+        }
+        setLoadingSessionSummaries(false);
+    };
+
     useEffect(() => {
         fetchSessions();
+        fetchAnalytics();
+        fetchTopQueries();
+        // Refresh analytics every 30 seconds
+        const interval = setInterval(() => {
+            fetchAnalytics();
+            fetchTopQueries();
+        }, 30000);
+        return () => clearInterval(interval);
     }, []);
+
+    // Fetch session summaries when switching to analytics view
+    useEffect(() => {
+        if (currentView === 'analytics') {
+            fetchAllSessionSummaries();
+        }
+    }, [currentView]);
 
     // Fetch Messages when session changes
     useEffect(() => {
@@ -89,6 +189,8 @@ function App() {
                     setMessages(data);
                     socket?.emit('join_session', activeSession.session_id);
                 });
+            // Also fetch session summary
+            fetchSessionSummary(activeSession.session_id);
         }
     }, [activeSession, socket]);
 
@@ -123,7 +225,7 @@ function App() {
             {/* Elegant Sidebar */}
             <div className={`${isSidebarOpen ? 'w-80' : 'w-0'} transition-all duration-300 border-r border-white/5 flex flex-col bg-slate-900/40 backdrop-blur-2xl z-20`}>
                 <div className="p-6">
-                    <div className="flex items-center justify-between mb-8">
+                    <div className="flex items-center justify-between mb-6">
                         <div className="flex items-center gap-2">
                             <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center p-1.5 shadow-lg shadow-blue-500/20">
                                 <MessageSquare className="text-white w-full h-full" />
@@ -135,62 +237,137 @@ function App() {
                         </button>
                     </div>
 
-                    <div className="relative group">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
-                        <input
-                            type="text"
-                            placeholder="Find chat..."
-                            className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm focus:ring-2 focus:ring-blue-500/50 transition-all outline-none text-slate-200 placeholder:text-slate-500"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                        />
-                    </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto px-3 space-y-1 pb-4 custom-scrollbar">
-                    <div className="px-3 mb-2">
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Active Chats</span>
-                    </div>
-                    {filteredSessions.map(session => (
+                    {/* Navigation Tabs */}
+                    <div className="flex gap-2 mb-6">
                         <button
-                            key={session.session_id}
-                            onClick={() => setActiveSession(session)}
-                            className={`w-full p-4  flex gap-4 rounded-2xl transition-all duration-200 group relative ${activeSession?.session_id === session.session_id ? 'bg-blue-600/10 border border-blue-500/20' : 'hover:bg-white/5 border border-transparent'}`}
+                            onClick={() => setCurrentView('chats')}
+                            className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                                currentView === 'chats'
+                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                                    : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
+                            }`}
                         >
-                            <div className="relative shrink-0">
-                                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border border-white/10 flex items-center justify-center text-slate-400 group-hover:text-blue-400 transition-colors overflow-hidden">
-                                    <User className="w-6 h-6" />
-                                </div>
-                                {/* Dynamic status based on last activity (within 5 minutes = online) */}
-                                {session.last_message_at && (new Date() - new Date(session.last_message_at)) < 300000 ? (
-                                    <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-[#020617] rounded-full"></div>
-                                ) : (
-                                    <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-slate-500 border-2 border-[#020617] rounded-full"></div>
-                                )}
-                            </div>
-                            <div className="flex-1 min-w-0 pr-2">
-                                <div className="flex justify-between items-center mb-0.5">
-                                    <h3 className="font-semibold truncate text-[14px] text-white tracking-tight">{session.customer_name || 'Anonymous'}</h3>
-                                    <span className="text-[10px] text-slate-500 font-medium">
-                                        {session.last_message_at ? format(new Date(session.last_message_at), 'HH:mm') : ''}
-                                    </span>
-                                </div>
-                                <p className="text-[12px] text-slate-400 truncate opacity-70 leading-relaxed font-light">{session.last_message || 'Started a conversation'}</p>
-                            </div>
-                            {activeSession?.session_id === session.session_id && (
-                                <div className="absolute right-2 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]"></div>
-                            )}
+                            <MessageSquare size={16} />
+                            Chats
                         </button>
-                    ))}
-                    {filteredSessions.length === 0 && (
-                        <div className="p-8 text-center mt-10">
-                            <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 border border-white/5">
-                                <Search className="text-slate-600" size={20} />
-                            </div>
-                            <p className="text-xs text-slate-500 font-medium italic">No results found</p>
+                        <button
+                            onClick={() => setCurrentView('analytics')}
+                            className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                                currentView === 'analytics'
+                                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30'
+                                    : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
+                            }`}
+                        >
+                            <BarChart3 size={16} />
+                            Analytics
+                        </button>
+                    </div>
+
+                    {currentView === 'chats' && (
+                        <div className="relative group">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
+                            <input
+                                type="text"
+                                placeholder="Find chat..."
+                                className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm focus:ring-2 focus:ring-blue-500/50 transition-all outline-none text-slate-200 placeholder:text-slate-500"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                            />
                         </div>
                     )}
                 </div>
+
+                {currentView === 'chats' && (
+                    <div className="flex-1 overflow-y-auto px-3 space-y-1 pb-4 custom-scrollbar">
+                        <div className="px-3 mb-2">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Active Chats</span>
+                        </div>
+                        {filteredSessions.map(session => (
+                            <button
+                                key={session.session_id}
+                                onClick={() => setActiveSession(session)}
+                                className={`w-full p-4  flex gap-4 rounded-2xl transition-all duration-200 group relative ${activeSession?.session_id === session.session_id ? 'bg-blue-600/10 border border-blue-500/20' : 'hover:bg-white/5 border border-transparent'}`}
+                            >
+                                <div className="relative shrink-0">
+                                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border border-white/10 flex items-center justify-center text-slate-400 group-hover:text-blue-400 transition-colors overflow-hidden">
+                                        <User className="w-6 h-6" />
+                                    </div>
+                                    {/* Dynamic status based on last activity (within 5 minutes = online) */}
+                                    {session.last_message_at && (new Date() - new Date(session.last_message_at)) < 300000 ? (
+                                        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-[#020617] rounded-full"></div>
+                                    ) : (
+                                        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-slate-500 border-2 border-[#020617] rounded-full"></div>
+                                    )}
+                                </div>
+                                <div className="flex-1 min-w-0 pr-2">
+                                    <div className="flex justify-between items-center mb-0.5">
+                                        <h3 className="font-semibold truncate text-[14px] text-white tracking-tight">{session.customer_name || 'Anonymous'}</h3>
+                                        <span className="text-[10px] text-slate-500 font-medium">
+                                            {session.last_message_at ? format(new Date(session.last_message_at), 'HH:mm') : ''}
+                                        </span>
+                                    </div>
+                                    <p className="text-[12px] text-slate-400 truncate opacity-70 leading-relaxed font-light">{session.last_message || 'Started a conversation'}</p>
+                                </div>
+                                {activeSession?.session_id === session.session_id && (
+                                    <div className="absolute right-2 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]"></div>
+                                )}
+                            </button>
+                        ))}
+                        {filteredSessions.length === 0 && (
+                            <div className="p-8 text-center mt-10">
+                                <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 border border-white/5">
+                                    <Search className="text-slate-600" size={20} />
+                                </div>
+                                <p className="text-xs text-slate-500 font-medium italic">No results found</p>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {currentView === 'analytics' && (
+                    <div className="flex-1 overflow-y-auto px-3 pb-4 custom-scrollbar">
+                        <div className="px-3 mb-4">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Quick Stats</span>
+                        </div>
+                        {analytics && (
+                            <div className="space-y-3 px-2">
+                                <div className="bg-slate-800/50 border border-white/5 rounded-xl p-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-blue-600/20 flex items-center justify-center">
+                                            <Users size={18} className="text-blue-400" />
+                                        </div>
+                                        <div>
+                                            <p className="text-xl font-bold text-white">{analytics.totalSessions}</p>
+                                            <p className="text-[10px] text-slate-400">Total Sessions</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-800/50 border border-white/5 rounded-xl p-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-purple-600/20 flex items-center justify-center">
+                                            <MessageCircle size={18} className="text-purple-400" />
+                                        </div>
+                                        <div>
+                                            <p className="text-xl font-bold text-white">{analytics.totalMessages}</p>
+                                            <p className="text-[10px] text-slate-400">Total Messages</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-800/50 border border-white/5 rounded-xl p-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-green-600/20 flex items-center justify-center">
+                                            <Activity size={18} className="text-green-400" />
+                                        </div>
+                                        <div>
+                                            <p className="text-xl font-bold text-white">{analytics.activeSessions24h}</p>
+                                            <p className="text-[10px] text-slate-400">Active Today</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 <div className="p-6 border-t border-white/5 mt-auto bg-slate-900/40">
                     <div className="flex items-center gap-3">
@@ -213,7 +390,311 @@ function App() {
                     </button>
                 )}
 
-                {activeSession ? (
+                {/* Analytics Page View */}
+                {currentView === 'analytics' && (
+                    <div className="flex-1 overflow-y-auto custom-scrollbar">
+                        {/* Analytics Header */}
+                        <div className="h-20 border-b border-white/5 px-8 flex items-center justify-between bg-slate-950/20 backdrop-blur-md sticky top-0 z-10">
+                            <div className="flex items-center gap-4">
+                                <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center text-white shadow-lg shadow-purple-500/20">
+                                    <BarChart3 className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h2 className="font-bold text-[17px] text-white tracking-tight">Analytics Dashboard</h2>
+                                    <p className="text-[10px] text-slate-400 mt-0.5">User message summaries & insights</p>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => { fetchAnalytics(); fetchTopQueries(); }}
+                                className="px-4 py-2 rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 hover:text-white transition-all flex items-center gap-2 text-xs font-medium"
+                            >
+                                <Activity size={14} />
+                                Refresh
+                            </button>
+                        </div>
+
+                        {/* Analytics Content */}
+                        <div className="p-8">
+                            {analytics ? (
+                                <>
+                                    {/* Stats Grid */}
+                                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5">
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className="w-10 h-10 rounded-xl bg-blue-600/20 flex items-center justify-center">
+                                                    <Users size={20} className="text-blue-400" />
+                                                </div>
+                                                <span className="text-xs text-slate-400 uppercase tracking-wider font-medium">Total Sessions</span>
+                                            </div>
+                                            <p className="text-3xl font-bold text-white">{analytics.totalSessions}</p>
+                                            <p className="text-xs text-green-400 mt-1">+{analytics.activeSessions24h} today</p>
+                                        </div>
+
+                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5">
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className="w-10 h-10 rounded-xl bg-purple-600/20 flex items-center justify-center">
+                                                    <MessageCircle size={20} className="text-purple-400" />
+                                                </div>
+                                                <span className="text-xs text-slate-400 uppercase tracking-wider font-medium">Total Messages</span>
+                                            </div>
+                                            <p className="text-3xl font-bold text-white">{analytics.totalMessages}</p>
+                                            <p className="text-xs text-slate-400 mt-1">~{analytics.avgMessagesPerSession} per session</p>
+                                        </div>
+
+                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5">
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className="w-10 h-10 rounded-xl bg-green-600/20 flex items-center justify-center">
+                                                    <Activity size={20} className="text-green-400" />
+                                                </div>
+                                                <span className="text-xs text-slate-400 uppercase tracking-wider font-medium">Active (24h)</span>
+                                            </div>
+                                            <p className="text-3xl font-bold text-white">{analytics.activeSessions24h}</p>
+                                            <p className="text-xs text-slate-400 mt-1">sessions today</p>
+                                        </div>
+
+                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5">
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className="w-10 h-10 rounded-xl bg-orange-600/20 flex items-center justify-center">
+                                                    <Zap size={20} className="text-orange-400" />
+                                                </div>
+                                                <span className="text-xs text-slate-400 uppercase tracking-wider font-medium">Avg Response</span>
+                                            </div>
+                                            <p className="text-3xl font-bold text-white">{Math.round(analytics.avgResponseTimeSeconds || 0)}s</p>
+                                            <p className="text-xs text-slate-400 mt-1">response time</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Two Column Layout */}
+                                    <div className="grid lg:grid-cols-2 gap-6 mb-6">
+                                        {/* Messages by Sender */}
+                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
+                                            <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                                <TrendingUp size={16} className="text-blue-400" />
+                                                Messages by Sender
+                                            </h3>
+                                            <div className="space-y-3">
+                                                {analytics.messagesBySender?.map((item, idx) => (
+                                                    <div key={idx} className="flex items-center justify-between">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className={`w-3 h-3 rounded-full ${
+                                                                item.sender === 'user' ? 'bg-blue-500' : 
+                                                                item.sender === 'ai' ? 'bg-green-500' : 'bg-purple-500'
+                                                            }`}></div>
+                                                            <span className="text-sm text-slate-300 capitalize">{item.sender}</span>
+                                                        </div>
+                                                        <span className="text-sm font-mono text-white">{item.count}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Sessions by Status */}
+                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
+                                            <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                                <Activity size={16} className="text-green-400" />
+                                                Sessions by Status
+                                            </h3>
+                                            <div className="space-y-3">
+                                                {analytics.sessionsByStatus?.map((item, idx) => (
+                                                    <div key={idx} className="flex items-center justify-between">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className={`w-3 h-3 rounded-full ${
+                                                                item.status === 'ai' ? 'bg-green-500' : 'bg-orange-500'
+                                                            }`}></div>
+                                                            <span className="text-sm text-slate-300 uppercase">{item.status} Mode</span>
+                                                        </div>
+                                                        <span className="text-sm font-mono text-white">{item.count}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Peak Hours */}
+                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
+                                            <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                                <Clock size={16} className="text-orange-400" />
+                                                Peak Activity Hours
+                                            </h3>
+                                            <div className="space-y-2">
+                                                {analytics.peakHours?.map((item, idx) => (
+                                                    <div key={idx} className="flex items-center gap-3">
+                                                        <span className="text-xs text-slate-400 w-16">{String(item.hour).padStart(2, '0')}:00</span>
+                                                        <div className="flex-1 bg-slate-700/50 rounded-full h-2 overflow-hidden">
+                                                            <div 
+                                                                className="h-full bg-gradient-to-r from-orange-500 to-yellow-500 rounded-full"
+                                                                style={{ width: `${(item.count / (analytics.peakHours[0]?.count || 1)) * 100}%` }}
+                                                            ></div>
+                                                        </div>
+                                                        <span className="text-xs font-mono text-slate-300 w-10 text-right">{item.count}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Messages Per Day */}
+                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
+                                            <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                                <BarChart3 size={16} className="text-purple-400" />
+                                                Messages (Last 7 Days)
+                                            </h3>
+                                            <div className="space-y-2">
+                                                {analytics.messagesPerDay?.slice(0, 7).map((item, idx) => (
+                                                    <div key={idx} className="flex items-center gap-3">
+                                                        <span className="text-xs text-slate-400 w-20">{format(new Date(item.date), 'MMM dd')}</span>
+                                                        <div className="flex-1 bg-slate-700/50 rounded-full h-2 overflow-hidden">
+                                                            <div 
+                                                                className="h-full bg-gradient-to-r from-purple-500 to-blue-500 rounded-full"
+                                                                style={{ width: `${(item.count / Math.max(...analytics.messagesPerDay.map(d => d.count), 1)) * 100}%` }}
+                                                            ></div>
+                                                        </div>
+                                                        <span className="text-xs font-mono text-slate-300 w-10 text-right">{item.count}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Top User Queries Section */}
+                                    <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
+                                        <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                            <Hash size={16} className="text-cyan-400" />
+                                            Top User Queries & Messages
+                                        </h3>
+                                        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {topQueries.length > 0 ? topQueries.map((item, idx) => (
+                                                <div key={idx} className="bg-slate-900/50 rounded-xl p-3 border border-white/5">
+                                                    <p className="text-sm text-slate-200 line-clamp-2">{item.query}</p>
+                                                    <div className="flex items-center justify-between mt-2">
+                                                        <span className="text-[10px] text-slate-500 uppercase">Frequency</span>
+                                                        <span className="text-xs font-bold text-cyan-400">{item.count}x</span>
+                                                    </div>
+                                                </div>
+                                            )) : (
+                                                <p className="text-sm text-slate-500 col-span-3">No queries recorded yet</p>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* User/Session-wise Summaries Section */}
+                                    <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
+                                        <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                            <Users size={16} className="text-emerald-400" />
+                                            User Session Chat Summaries
+                                        </h3>
+                                        {loadingSessionSummaries ? (
+                                            <div className="flex items-center justify-center py-8">
+                                                <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+                                            </div>
+                                        ) : allSessionSummaries.length > 0 ? (
+                                            <div className="space-y-4">
+                                                {allSessionSummaries.map((summary, idx) => (
+                                                    <div key={idx} className="bg-slate-900/50 rounded-xl p-4 border border-white/5 hover:border-emerald-500/30 transition-all">
+                                                        {/* Header */}
+                                                        <div className="flex items-start justify-between mb-3">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-600 flex items-center justify-center text-white text-sm font-bold">
+                                                                    {(summary.customer_name || 'A').charAt(0).toUpperCase()}
+                                                                </div>
+                                                                <div>
+                                                                    <h4 className="text-sm font-semibold text-white">{summary.customer_name || 'Anonymous User'}</h4>
+                                                                    <p className="text-[10px] font-mono text-slate-500">{summary.sessionId}</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-[10px] px-2 py-1 bg-slate-700/50 text-slate-300 rounded-full">
+                                                                    {summary.stats?.totalMessages || 0} msgs
+                                                                </span>
+                                                                <span className={`text-[10px] px-2 py-1 rounded-full ${
+                                                                    summary.status === 'ai' 
+                                                                        ? 'bg-green-500/20 text-green-400' 
+                                                                        : 'bg-orange-500/20 text-orange-400'
+                                                                }`}>
+                                                                    {summary.status === 'ai' ? '🤖 AI' : '👤 Human'}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                        
+                                                        {/* Chat History Summary */}
+                                                        <div className="mb-3">
+                                                            <p className="text-[10px] text-slate-500 mb-2 flex items-center gap-1">
+                                                                <MessageSquare size={10} />
+                                                                Chat History ({summary.chatHistory?.length || 0} messages)
+                                                            </p>
+                                                            <div className="bg-slate-800/50 rounded-lg p-3 max-h-64 overflow-y-auto space-y-2">
+                                                                {summary.chatHistory?.length > 0 ? (
+                                                                    summary.chatHistory.map((msg, midx) => (
+                                                                        <div key={midx} className={`flex gap-2 items-start p-2 rounded-lg ${
+                                                                            msg.sender === 'user' ? 'bg-blue-500/10' : 
+                                                                            msg.sender === 'ai' ? 'bg-green-500/10' : 'bg-orange-500/10'
+                                                                        }`}>
+                                                                            <div className="flex flex-col min-w-[70px]">
+                                                                                <span className={`text-[10px] font-semibold ${
+                                                                                    msg.sender === 'user' ? 'text-blue-400' : 
+                                                                                    msg.sender === 'ai' ? 'text-green-400' : 'text-orange-400'
+                                                                                }`}>
+                                                                                    {msg.sender === 'user' ? '👤 User' : 
+                                                                                     msg.sender === 'ai' ? '🤖 AI' : '👨‍💼 Admin'}
+                                                                                </span>
+                                                                                <span className="text-[9px] text-slate-600">
+                                                                                    {format(new Date(msg.timestamp), 'HH:mm')}
+                                                                                </span>
+                                                                            </div>
+                                                                            <p className="text-xs text-slate-300 flex-1">{msg.content}</p>
+                                                                        </div>
+                                                                    ))
+                                                                ) : (
+                                                                    <p className="text-xs text-slate-500 italic">No messages</p>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Keywords */}
+                                                        {summary.topKeywords?.length > 0 && (
+                                                            <div className="mb-3">
+                                                                <p className="text-[10px] text-slate-500 mb-1">Topics discussed:</p>
+                                                                <div className="flex flex-wrap gap-1">
+                                                                    {summary.topKeywords.slice(0, 8).map((kw, kidx) => (
+                                                                        <span key={kidx} className="text-[10px] px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded-full">
+                                                                            {kw.word}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+                                                        {/* Footer Stats */}
+                                                        <div className="flex items-center justify-between text-[10px] text-slate-500 pt-2 border-t border-white/5">
+                                                            <div className="flex items-center gap-3">
+                                                                <span className="text-blue-400">👤 {summary.stats?.userMessages || 0}</span>
+                                                                <span className="text-green-400">🤖 {summary.stats?.aiMessages || 0}</span>
+                                                                <span className="text-orange-400">👨‍💼 {summary.stats?.adminMessages || 0}</span>
+                                                            </div>
+                                                            <span>
+                                                                {summary.last_message_at ? format(new Date(summary.last_message_at), 'MMM dd, HH:mm') : 'N/A'}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="text-sm text-slate-500 text-center py-8">No session summaries available</p>
+                                        )}
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="flex items-center justify-center py-20">
+                                    <div className="text-center">
+                                        <div className="w-12 h-12 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                                        <p className="text-slate-400">Loading analytics...</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* Chats View */}
+                {currentView === 'chats' && activeSession ? (
                     <>
                         {/* Header */}
                         <div className="h-20 border-b border-white/5 px-8 flex items-center justify-between bg-slate-950/20 backdrop-blur-md sticky top-0 z-10">
@@ -230,6 +711,17 @@ function App() {
                                 </div>
                             </div>
                             <div className="flex items-center gap-3">
+                                <button 
+                                    onClick={() => setShowSessionSummary(!showSessionSummary)}
+                                    className={`px-4 py-2 rounded-xl border flex items-center gap-2 transition-all ${
+                                        showSessionSummary 
+                                            ? 'bg-cyan-600/20 border-cyan-500/30 text-cyan-400' 
+                                            : 'border-white/10 text-slate-400 hover:bg-white/5 hover:text-white'
+                                    }`}
+                                >
+                                    <FileText size={16} />
+                                    <span className="text-xs font-medium">Summary</span>
+                                </button>
                                 <button className="w-9 h-9 rounded-xl border border-white/10 flex items-center justify-center text-slate-400 hover:bg-white/5 hover:text-white transition-all">
                                     <ShieldCheck size={18} />
                                 </button>
@@ -239,21 +731,32 @@ function App() {
                             </div>
                         </div>
 
-                        {/* Chat Screen */}
-                        <div className="flex-1 overflow-y-auto p-10 space-y-8 custom-scrollbar scroll-smooth">
+                        {/* Main Chat Area with Optional Summary Panel */}
+                        <div className="flex-1 flex overflow-hidden">
+                            {/* Chat Screen */}
+                            <div className={`flex-1 overflow-y-auto p-10 space-y-8 custom-scrollbar scroll-smooth ${showSessionSummary ? 'pr-4' : ''}`}>
                             {messages.map((msg, idx) => {
                                 const isPreviousSameSender = idx > 0 && messages[idx - 1].sender === msg.sender;
+                                const getSenderLabel = (sender) => {
+                                    if (sender === 'admin') return 'You';
+                                    if (sender === 'ai') return 'AI Bot';
+                                    return 'Customer';
+                                };
                                 return (
                                     <div key={idx} className={`flex ${msg.sender === 'admin' ? 'justify-end' : 'justify-start'} ${isPreviousSameSender ? '-mt-6' : ''}`}>
                                         <div className={`max-w-[75%] group flex flex-col ${msg.sender === 'admin' ? 'items-end' : 'items-start'}`}>
                                             {!isPreviousSameSender && (
                                                 <div className="flex items-center gap-3 mb-2 px-1">
-                                                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">{msg.sender === 'admin' ? 'You' : 'Customer'}</span>
+                                                    <span className={`text-[10px] font-bold uppercase tracking-[0.2em] ${
+                                                        msg.sender === 'ai' ? 'text-green-400' : 'text-slate-400'
+                                                    }`}>{getSenderLabel(msg.sender)}</span>
                                                 </div>
                                             )}
                                             <div className={`relative px-5 py-4 rounded-3xl shadow-2xl transition-all duration-300 ${msg.sender === 'admin'
                                                 ? 'bg-blue-600 text-white rounded-tr-none border border-blue-400/20 ring-1 ring-blue-500/30'
-                                                : 'bg-slate-800/80 backdrop-blur-md border border-white/10 text-slate-100 rounded-tl-none ring-1 ring-white/5'
+                                                : msg.sender === 'ai' 
+                                                    ? 'bg-green-900/40 backdrop-blur-md border border-green-500/20 text-slate-100 rounded-tl-none ring-1 ring-green-500/10'
+                                                    : 'bg-slate-800/80 backdrop-blur-md border border-white/10 text-slate-100 rounded-tl-none ring-1 ring-white/5'
                                                 }`}>
                                                 <p className="text-[14px] leading-relaxed font-normal whitespace-pre-wrap">{msg.content}</p>
                                                 <div className={`absolute bottom-1 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-500 translate-y-1 group-hover:translate-y-0`}>
@@ -268,6 +771,177 @@ function App() {
                                 )
                             })}
                             <div ref={messagesEndRef} />
+                        </div>
+
+                            {/* Session Summary Panel */}
+                            {showSessionSummary && sessionSummary && (
+                                <div className="w-80 border-l border-white/5 bg-slate-900/60 backdrop-blur-md overflow-y-auto custom-scrollbar">
+                                    <div className="p-5">
+                                        {/* Summary Header */}
+                                        <div className="flex items-center justify-between mb-5">
+                                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                <FileText size={16} className="text-cyan-400" />
+                                                Chat Summary
+                                            </h3>
+                                            <button 
+                                                onClick={() => setShowSessionSummary(false)}
+                                                className="w-6 h-6 rounded-lg bg-white/5 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-all"
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+
+                                        {/* Stats Cards */}
+                                        <div className="grid grid-cols-2 gap-3 mb-5">
+                                            <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
+                                                <div className="w-8 h-8 rounded-lg bg-blue-600/20 flex items-center justify-center mx-auto mb-2">
+                                                    <User size={14} className="text-blue-400" />
+                                                </div>
+                                                <p className="text-lg font-bold text-white">{sessionSummary.stats?.userMessages || 0}</p>
+                                                <p className="text-[10px] text-slate-400">User Msgs</p>
+                                            </div>
+                                            <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
+                                                <div className="w-8 h-8 rounded-lg bg-green-600/20 flex items-center justify-center mx-auto mb-2">
+                                                    <Bot size={14} className="text-green-400" />
+                                                </div>
+                                                <p className="text-lg font-bold text-white">{sessionSummary.stats?.aiMessages || 0}</p>
+                                                <p className="text-[10px] text-slate-400">AI Replies</p>
+                                            </div>
+                                            <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
+                                                <div className="w-8 h-8 rounded-lg bg-purple-600/20 flex items-center justify-center mx-auto mb-2">
+                                                    <ShieldCheck size={14} className="text-purple-400" />
+                                                </div>
+                                                <p className="text-lg font-bold text-white">{sessionSummary.stats?.adminMessages || 0}</p>
+                                                <p className="text-[10px] text-slate-400">Admin Msgs</p>
+                                            </div>
+                                            <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
+                                                <div className="w-8 h-8 rounded-lg bg-orange-600/20 flex items-center justify-center mx-auto mb-2">
+                                                    <Timer size={14} className="text-orange-400" />
+                                                </div>
+                                                <p className="text-lg font-bold text-white">
+                                                    {sessionSummary.stats?.sessionDurationSeconds 
+                                                        ? sessionSummary.stats.sessionDurationSeconds < 60 
+                                                            ? `${sessionSummary.stats.sessionDurationSeconds}s`
+                                                            : `${Math.round(sessionSummary.stats.sessionDurationSeconds / 60)}m`
+                                                        : '0s'}
+                                                </p>
+                                                <p className="text-[10px] text-slate-400">Duration</p>
+                                            </div>
+                                        </div>
+
+                                        {/* Session Status */}
+                                        <div className="bg-slate-800/30 border border-white/5 rounded-xl p-3 mb-4">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs text-slate-400">Mode</span>
+                                                <span className={`text-xs font-bold uppercase px-2 py-1 rounded-lg ${
+                                                    sessionSummary.status === 'ai' 
+                                                        ? 'bg-green-600/20 text-green-400' 
+                                                        : 'bg-orange-600/20 text-orange-400'
+                                                }`}>
+                                                    {sessionSummary.status === 'ai' ? '🤖 AI Mode' : '👤 Human Mode'}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {/* Top Keywords */}
+                                        {sessionSummary.topKeywords?.length > 0 && (
+                                            <div className="mb-4">
+                                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                                    <Tag size={12} />
+                                                    Top Keywords
+                                                </h4>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {sessionSummary.topKeywords.slice(0, 8).map((kw, idx) => (
+                                                        <span 
+                                                            key={idx} 
+                                                            className="px-2 py-1 bg-cyan-600/10 text-cyan-300 rounded-lg text-[11px] border border-cyan-500/20"
+                                                        >
+                                                            {kw.word}
+                                                            <span className="text-cyan-500 ml-1">({kw.count})</span>
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Chat History */}
+                                        {sessionSummary.chatHistory?.length > 0 && (
+                                            <div>
+                                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                                    <MessageCircle size={12} />
+                                                    Chat History ({sessionSummary.chatHistory.length})
+                                                </h4>
+                                                <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar pr-1">
+                                                    {sessionSummary.chatHistory.map((msg, idx) => (
+                                                        <div 
+                                                            key={idx} 
+                                                            className={`rounded-xl p-3 border transition-all ${
+                                                                msg.sender === 'user' 
+                                                                    ? 'bg-blue-500/10 border-blue-500/20' 
+                                                                    : msg.sender === 'ai'
+                                                                    ? 'bg-green-500/10 border-green-500/20'
+                                                                    : 'bg-orange-500/10 border-orange-500/20'
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center gap-2 mb-1">
+                                                                <span className={`text-[10px] font-bold uppercase ${
+                                                                    msg.sender === 'user' 
+                                                                        ? 'text-blue-400' 
+                                                                        : msg.sender === 'ai'
+                                                                        ? 'text-green-400'
+                                                                        : 'text-orange-400'
+                                                                }`}>
+                                                                    {msg.sender === 'user' ? '👤 User' : msg.sender === 'ai' ? '🤖 AI Bot' : '👨‍💼 Admin'}
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-xs text-slate-200">{msg.content}</p>
+                                                            <p className="text-[9px] text-slate-500 mt-2 flex items-center gap-1">
+                                                                <Clock size={10} />
+                                                                {format(new Date(msg.timestamp), 'MMM dd, HH:mm')}
+                                                            </p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Metadata Info */}
+                                        {sessionSummary.metadata && (
+                                            <div className="mt-4 pt-4 border-t border-white/5">
+                                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
+                                                    Session Info
+                                                </h4>
+                                                <div className="space-y-2 text-[11px]">
+                                                    {sessionSummary.metadata.site_name && (
+                                                        <div className="flex justify-between">
+                                                            <span className="text-slate-500">Site</span>
+                                                            <span className="text-slate-300">{sessionSummary.metadata.site_name}</span>
+                                                        </div>
+                                                    )}
+                                                    {sessionSummary.metadata.host && (
+                                                        <div className="flex justify-between">
+                                                            <span className="text-slate-500">Origin</span>
+                                                            <span className="text-slate-300 truncate ml-2 max-w-[150px]">{sessionSummary.metadata.host}</span>
+                                                        </div>
+                                                    )}
+                                                    {sessionSummary.metadata.timezone && (
+                                                        <div className="flex justify-between">
+                                                            <span className="text-slate-500">Timezone</span>
+                                                            <span className="text-slate-300">{sessionSummary.metadata.timezone}</span>
+                                                        </div>
+                                                    )}
+                                                    {sessionSummary.createdAt && (
+                                                        <div className="flex justify-between">
+                                                            <span className="text-slate-500">Started</span>
+                                                            <span className="text-slate-300">{format(new Date(sessionSummary.createdAt), 'MMM dd, HH:mm')}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         {/* Input Deck */}
@@ -313,7 +987,7 @@ function App() {
                             </p>
                         </div>
                     </>
-                ) : (
+                ) : currentView === 'chats' && (
                     <div className="flex-1 flex flex-col items-center justify-center p-20">
                         <div className="relative group cursor-default">
                             <div className="absolute -inset-10 bg-blue-600/10 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-all duration-1000"></div>

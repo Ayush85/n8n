@@ -19,6 +19,7 @@
     let sessionId = localStorage.getItem('n8n_chat_session_id') || 'sess_' + Math.random().toString(36).substr(2, 9);
     let sessionMode = localStorage.getItem('n8n_chat_mode') || 'ai'; // 'ai' or 'human'
     let isTyping = false;
+    let isSessionLoaded = false; // Track if session status is loaded from server
 
     // Debug log
     console.log('🚀 N8N Chat Widget Initialized');
@@ -167,7 +168,14 @@
             color: white;
             border-bottom-right-radius: 4px;
         }
-        .n8n-msg-ai, .n8n-msg-admin {
+        .n8n-msg-ai {
+            align-self: flex-start;
+            background: #ecfdf5;
+            color: #064e3b;
+            border-bottom-left-radius: 4px;
+            border: 1px solid #d1fae5;
+        }
+        .n8n-msg-admin {
             align-self: flex-start;
             background: #f1f5f9;
             color: #1e293b;
@@ -180,6 +188,37 @@
             font-size: 12px;
             padding: 8px 14px;
             border-radius: 20px;
+        }
+        .n8n-msg-label {
+            font-size: 10px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            opacity: 0.7;
+        }
+        .n8n-msg-label-user {
+            text-align: right;
+            color: #64748b;
+        }
+        .n8n-msg-label-ai {
+            text-align: left;
+            color: #059669;
+        }
+        .n8n-msg-label-admin {
+            text-align: left;
+            color: #6366f1;
+        }
+        .n8n-msg-wrapper {
+            display: flex;
+            flex-direction: column;
+            max-width: 85%;
+        }
+        .n8n-msg-wrapper-user {
+            align-self: flex-end;
+            align-items: flex-end;
+        }
+        .n8n-msg-wrapper-ai, .n8n-msg-wrapper-admin {
+            align-self: flex-start;
+            align-items: flex-start;
         }
 
         .n8n-typing {
@@ -286,6 +325,24 @@
 
     function addMessage(sender, content) {
         removeTypingIndicator();
+        
+        // Create wrapper div for label + message
+        const wrapperDiv = document.createElement('div');
+        wrapperDiv.className = `n8n-msg-wrapper n8n-msg-wrapper-${sender}`;
+        
+        // Add label
+        const labelDiv = document.createElement('div');
+        labelDiv.className = `n8n-msg-label n8n-msg-label-${sender}`;
+        if (sender === 'user') {
+            labelDiv.innerText = 'You';
+        } else if (sender === 'ai') {
+            labelDiv.innerText = '🤖 AI Bot';
+        } else if (sender === 'admin') {
+            labelDiv.innerText = '👤 Support Agent';
+        }
+        wrapperDiv.appendChild(labelDiv);
+        
+        // Create message bubble
         const msgDiv = document.createElement('div');
         msgDiv.className = `n8n-msg n8n-msg-${sender}`;
 
@@ -294,8 +351,9 @@
         } else {
             msgDiv.innerText = content;
         }
-
-        chatMessages.appendChild(msgDiv);
+        
+        wrapperDiv.appendChild(msgDiv);
+        chatMessages.appendChild(wrapperDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
@@ -500,6 +558,40 @@
         socket = io(CONFIG.API_URL);
         socket.emit('join_session', sessionId);
 
+        // Disable input until session is loaded
+        chatInput.disabled = true;
+        chatSend.disabled = true;
+        chatInput.placeholder = 'Loading session...';
+
+        // Load session status FIRST (before allowing input)
+        fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}`)
+            .then(res => {
+                if (!res.ok) throw new Error('Session not found');
+                return res.json();
+            })
+            .then(session => {
+                if (session && session.status) {
+                    sessionMode = session.status;
+                    localStorage.setItem('n8n_chat_mode', session.status);
+                    setMode(session.status);
+                    console.log('📦 Session loaded from server, mode:', session.status);
+                } else {
+                    setMode('ai'); // Default for new sessions
+                }
+            })
+            .catch(() => {
+                // New session, use AI mode
+                setMode('ai');
+                console.log('🆕 New session, defaulting to AI mode');
+            })
+            .finally(() => {
+                // Enable input after session is loaded
+                isSessionLoaded = true;
+                chatInput.disabled = false;
+                chatSend.disabled = false;
+                chatInput.placeholder = 'Type your message...';
+            });
+
         // Load chat history
         fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}/messages`)
             .then(res => res.json())
@@ -515,20 +607,6 @@
                 });
             })
             .catch(err => console.error('Failed to load history:', err));
-
-        // Check session mode from server
-        fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}`)
-            .then(res => res.json())
-            .then(session => {
-                if (session && session.status) {
-                    setMode(session.status);
-                } else {
-                    setMode('ai'); // Default for new sessions
-                }
-            })
-            .catch(() => {
-                setMode('ai');
-            });
 
         // Listen for status changes (e.g. from admin)
         socket.on('status_change', (data) => {
