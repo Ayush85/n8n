@@ -13,24 +13,23 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false } // Required for Supabase
 });
 
-async function applySchema() {
+async function migrate() {
     try {
-        console.log('Reading schema.sql...');
-        const schema = fs.readFileSync('../schema.sql', 'utf8');
+        console.log('Applying schema migrations...');
 
-        console.log('Connecting to Supabase...');
-        const client = await pool.connect();
+        // Add metadata column if it doesn't exist
+        await pool.query(`
+            ALTER TABLE sessions 
+            ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+        `);
+        console.log('✅ Metadata column added/verified');
 
-        console.log('Applying schema...');
-        await client.query(schema);
-
-        console.log('Schema applied successfully!');
-        client.release();
+        console.log('Migration complete!');
     } catch (err) {
-        console.error('Error applying schema:', err);
+        console.error('Migration error:', err);
     } finally {
         await pool.end();
     }
 }
 
-applySchema();
+migrate();

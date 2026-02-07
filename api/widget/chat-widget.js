@@ -1,14 +1,44 @@
 (function () {
-    // Configuration
-    const API_URL = 'http://localhost:3001';
-    const SOCKET_IO_CDN = 'https://cdn.socket.io/4.7.2/socket.io.min.js';
+    // ============================================
+    // CONFIGURATION - Customize these values
+    // ============================================
+    const CONFIG = {
+        API_URL: window.N8N_CHAT_API_URL || 'http://localhost:3001',
+        N8N_WEBHOOK_URL: window.N8N_CHAT_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/b5ecaafa-5b1f-483f-b03e-4275a31bdb0a/chat',
+        CLIENT_ID: window.N8N_CHAT_CLIENT_ID || 'default',
+        SITE_NAME: window.N8N_CHAT_SITE_NAME || document.title || 'Support Chat',
+        PRIMARY_COLOR: window.N8N_CHAT_PRIMARY_COLOR || '#2563eb',
+        SOCKET_IO_CDN: 'https://cdn.socket.io/4.7.2/socket.io.min.js',
+    };
 
-    // State
+    // ============================================
+    // STATE
+    // ============================================
     let socket = null;
     let sessionId = localStorage.getItem('n8n_chat_session_id') || 'sess_' + Math.random().toString(36).substr(2, 9);
+    let sessionMode = localStorage.getItem('n8n_chat_mode') || 'ai'; // 'ai' or 'human'
+    let isTyping = false;
+
+    // Debug log
+    console.log('🚀 N8N Chat Widget Initialized');
+    console.log('📋 Session ID:', sessionId);
+    console.log('🤖 Session Mode:', sessionMode);
+    console.log('🔗 N8N Webhook:', CONFIG.N8N_WEBHOOK_URL);
+    console.log('🌐 API URL:', CONFIG.API_URL);
+
+    // Global reset function (call from console: n8nChatReset())
+    window.n8nChatReset = function () {
+        localStorage.removeItem('n8n_chat_session_id');
+        localStorage.removeItem('n8n_chat_mode');
+        console.log('✅ Chat session reset! Refresh the page.');
+        location.reload();
+    };
+
     localStorage.setItem('n8n_chat_session_id', sessionId);
 
-    // Styles
+    // ============================================
+    // STYLES
+    // ============================================
     const styles = `
         #n8n-chat-widget {
             position: fixed;
@@ -21,134 +51,232 @@
             width: 60px;
             height: 60px;
             border-radius: 50%;
-            background: #2563eb;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            background: ${CONFIG.PRIMARY_COLOR};
+            box-shadow: 0 4px 20px rgba(37, 99, 235, 0.4);
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            border: none;
         }
-        #n8n-chat-button:hover { transform: scale(1.05); }
-        #n8n-chat-button svg { fill: white; width: 30px; height: 30px; }
+        #n8n-chat-button:hover { transform: scale(1.08); box-shadow: 0 6px 24px rgba(37, 99, 235, 0.5); }
+        #n8n-chat-button svg { fill: white; width: 28px; height: 28px; }
         
         #n8n-chat-window {
             position: absolute;
             bottom: 80px;
             right: 0;
-            width: 350px;
-            height: 500px;
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+            width: 380px;
+            height: 550px;
+            background: #ffffff;
+            border-radius: 20px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.2);
             display: none;
             flex-direction: column;
             overflow: hidden;
             border: 1px solid #e2e8f0;
         }
-        #n8n-chat-window.open { display: flex; }
+        #n8n-chat-window.open { display: flex; animation: slideUp 0.3s ease; }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         
         .n8n-chat-header {
-            padding: 16px;
-            background: #2563eb;
+            padding: 18px 20px;
+            background: linear-gradient(135deg, ${CONFIG.PRIMARY_COLOR} 0%, #4f46e5 100%);
             color: white;
-            font-weight: bold;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
+        .n8n-chat-header-title { font-weight: 700; font-size: 16px; }
+        .n8n-chat-header-status { font-size: 11px; opacity: 0.85; margin-top: 2px; }
+        .n8n-chat-close { 
+            background: rgba(255,255,255,0.2); 
+            border: none; 
+            color: white; 
+            width: 32px; 
+            height: 32px; 
+            border-radius: 50%; 
+            cursor: pointer; 
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+        .n8n-chat-close:hover { background: rgba(255,255,255,0.3); }
+
         .n8n-chat-messages {
             flex: 1;
-            padding: 16px;
+            padding: 20px;
             overflow-y: auto;
-            background: #f8fafc;
+            background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
+        
         .n8n-chat-input-area {
-            padding: 12px;
+            padding: 16px;
             border-top: 1px solid #e2e8f0;
             display: flex;
-            gap: 8px;
+            gap: 10px;
+            background: #ffffff;
         }
         .n8n-chat-input {
             flex: 1;
-            padding: 8px 12px;
-            border: 1px solid #cbd5e1;
-            border-radius: 8px;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
             outline: none;
+            font-size: 14px;
+            transition: border-color 0.2s;
         }
-        .n8n-chat-input:focus { border-color: #2563eb; }
+        .n8n-chat-input:focus { border-color: ${CONFIG.PRIMARY_COLOR}; }
+        .n8n-chat-input:disabled { background: #f1f5f9; }
+        
         .n8n-chat-send {
-            background: #2563eb;
+            background: ${CONFIG.PRIMARY_COLOR};
             color: white;
             border: none;
-            padding: 8px 16px;
-            border-radius: 8px;
+            padding: 12px 20px;
+            border-radius: 12px;
             cursor: pointer;
             font-weight: 600;
+            font-size: 14px;
+            transition: all 0.2s;
         }
+        .n8n-chat-send:hover { background: #1d4ed8; transform: scale(1.02); }
+        .n8n-chat-send:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
         
         .n8n-msg {
-            margin-bottom: 12px;
-            max-width: 80%;
-            padding: 10px 14px;
-            border-radius: 12px;
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 16px;
             font-size: 14px;
-            line-height: 1.4;
+            line-height: 1.5;
+            word-wrap: break-word;
+            animation: fadeIn 0.3s ease;
         }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        
         .n8n-msg-user {
             align-self: flex-end;
-            background: #2563eb;
+            background: ${CONFIG.PRIMARY_COLOR};
             color: white;
-            margin-left: auto;
-            border-bottom-right-radius: 2px;
+            border-bottom-right-radius: 4px;
         }
-        .n8n-msg-admin {
+        .n8n-msg-ai, .n8n-msg-admin {
             align-self: flex-start;
-            background: #e2e8f0;
+            background: #f1f5f9;
             color: #1e293b;
-            border-bottom-left-radius: 2px;
+            border-bottom-left-radius: 4px;
         }
+        .n8n-msg-system {
+            align-self: center;
+            background: #fef3c7;
+            color: #92400e;
+            font-size: 12px;
+            padding: 8px 14px;
+            border-radius: 20px;
+        }
+
+        .n8n-typing {
+            display: flex;
+            gap: 4px;
+            padding: 12px 16px;
+            background: #f1f5f9;
+            border-radius: 16px;
+            align-self: flex-start;
+            width: fit-content;
+        }
+        .n8n-typing-dot {
+            width: 8px;
+            height: 8px;
+            background: #94a3b8;
+            border-radius: 50%;
+            animation: typingBounce 1.4s infinite ease-in-out;
+        }
+        .n8n-typing-dot:nth-child(1) { animation-delay: 0s; }
+        .n8n-typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .n8n-typing-dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typingBounce { 0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; } 40% { transform: scale(1); opacity: 1; } }
+
+        .n8n-mode-badge {
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 10px;
+            margin-left: 8px;
+            font-weight: 600;
+        }
+        .n8n-mode-ai { background: rgba(16, 185, 129, 0.2); color: #059669; }
+        .n8n-mode-human { background: rgba(239, 68, 68, 0.2); color: #dc2626; }
     `;
 
-    // Inject Styles
+    // ============================================
+    // UI CREATION
+    // ============================================
     const styleSheet = document.createElement("style");
     styleSheet.innerText = styles;
     document.head.appendChild(styleSheet);
 
-    // Create UI
     const widget = document.createElement('div');
     widget.id = 'n8n-chat-widget';
     widget.innerHTML = `
         <div id="n8n-chat-window">
             <div class="n8n-chat-header">
-                <span>Support Chat</span>
-                <span id="n8n-chat-close" style="cursor:pointer">&times;</span>
+                <div>
+                    <div class="n8n-chat-header-title">${CONFIG.SITE_NAME}<span id="n8n-mode-badge" class="n8n-mode-badge n8n-mode-ai">AI</span></div>
+                    <div class="n8n-chat-header-status" id="n8n-status">Online • Ready to help</div>
+                </div>
+                <button class="n8n-chat-close" id="n8n-chat-close">&times;</button>
             </div>
             <div id="n8n-chat-messages" class="n8n-chat-messages"></div>
             <form id="n8n-chat-form" class="n8n-chat-input-area">
-                <input type="text" id="n8n-chat-input" class="n8n-chat-input" placeholder="Type a message..." autocomplete="off">
-                <button type="submit" class="n8n-chat-send">Send</button>
+                <input type="text" id="n8n-chat-input" class="n8n-chat-input" placeholder="Type your message..." autocomplete="off">
+                <button type="submit" class="n8n-chat-send" id="n8n-chat-send">Send</button>
             </form>
         </div>
-        <div id="n8n-chat-button">
+        <button id="n8n-chat-button">
             <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
-        </div>
+        </button>
     `;
     document.body.appendChild(widget);
 
+    // ============================================
+    // DOM REFERENCES
+    // ============================================
     const chatWindow = document.getElementById('n8n-chat-window');
     const chatButton = document.getElementById('n8n-chat-button');
     const chatClose = document.getElementById('n8n-chat-close');
     const chatForm = document.getElementById('n8n-chat-form');
     const chatInput = document.getElementById('n8n-chat-input');
     const chatMessages = document.getElementById('n8n-chat-messages');
+    const chatSend = document.getElementById('n8n-chat-send');
+    const modeBadge = document.getElementById('n8n-mode-badge');
+    const statusText = document.getElementById('n8n-status');
 
-    // Toggle Window
-    chatButton.onclick = () => chatWindow.classList.toggle('open');
-    chatClose.onclick = () => chatWindow.classList.remove('open');
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+    function getMetadata() {
+        return {
+            client_id: CONFIG.CLIENT_ID,
+            site_name: CONFIG.SITE_NAME,
+            host: window.location.origin,
+            href: window.location.href,
+            title: document.title,
+            referrer: document.referrer || 'direct',
+            user_agent: navigator.userAgent,
+            language: navigator.language,
+            screen_width: window.screen.width,
+            screen_height: window.screen.height,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        };
+    }
 
-    // Helper: Add Message to UI
     function addMessage(sender, content) {
+        removeTypingIndicator();
         const msgDiv = document.createElement('div');
         msgDiv.className = `n8n-msg n8n-msg-${sender}`;
         msgDiv.innerText = content;
@@ -156,46 +284,248 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
-    // Load Socket.io and Initialize
-    function init() {
-        socket = io(API_URL);
-
-        socket.emit('join_session', sessionId);
-
-        // Fetch history
-        fetch(`${API_URL}/api/sessions/${sessionId}/messages`)
-            .then(res => res.json())
-            .then(msgs => {
-                msgs.forEach(m => addMessage(m.sender === 'admin' ? 'admin' : 'user', m.content));
-            });
-
-        socket.on('new_message', (msg) => {
-            if (msg.sessionId === sessionId) {
-                addMessage(msg.sender === 'admin' ? 'admin' : 'user', msg.content);
-            }
-        });
+    function addSystemMessage(content) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'n8n-msg n8n-msg-system';
+        msgDiv.innerText = content;
+        chatMessages.appendChild(msgDiv);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
-    // Inject Socket.io Script
-    const script = document.createElement('script');
-    script.src = SOCKET_IO_CDN;
-    script.onload = init;
-    document.head.appendChild(script);
+    function showTypingIndicator() {
+        if (isTyping) return;
+        isTyping = true;
+        const typing = document.createElement('div');
+        typing.className = 'n8n-typing';
+        typing.id = 'n8n-typing-indicator';
+        typing.innerHTML = '<div class="n8n-typing-dot"></div><div class="n8n-typing-dot"></div><div class="n8n-typing-dot"></div>';
+        chatMessages.appendChild(typing);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
 
-    // Form Submit
-    chatForm.onsubmit = (e) => {
+    function removeTypingIndicator() {
+        isTyping = false;
+        const typing = document.getElementById('n8n-typing-indicator');
+        if (typing) typing.remove();
+    }
+
+    function setMode(mode) {
+        sessionMode = mode;
+        localStorage.setItem('n8n_chat_mode', mode);
+        if (mode === 'human') {
+            modeBadge.textContent = 'HUMAN';
+            modeBadge.className = 'n8n-mode-badge n8n-mode-human';
+            statusText.textContent = 'Connected to human support';
+        } else {
+            modeBadge.textContent = 'AI';
+            modeBadge.className = 'n8n-mode-badge n8n-mode-ai';
+            statusText.textContent = 'Online • Ready to help';
+        }
+    }
+
+    function setLoading(loading) {
+        chatInput.disabled = loading;
+        chatSend.disabled = loading;
+    }
+
+    // ============================================
+    // SAVE MESSAGE TO DATABASE
+    // ============================================
+    async function saveMessageToDB(sender, content) {
+        try {
+            // Non-blocking for the UI
+            fetch(`${CONFIG.API_URL}/api/messages`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId,
+                    sender,
+                    content,
+                    metadata: getMetadata()
+                })
+            }).catch(err => console.error('Failed to save message:', err));
+        } catch (err) {
+            console.error('Failed to save message:', err);
+        }
+    }
+
+    // ============================================
+    // SEND TO N8N AI (via local proxy to avoid CORS)
+    // ============================================
+    async function sendToN8nAI(message) {
+        try {
+            console.log('📤 Sending to n8n via proxy:', { message });
+
+            // Use local proxy to avoid CORS issues
+            const response = await fetch(`${CONFIG.API_URL}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'sendMessage',
+                    sessionId: sessionId,
+                    chatInput: message,
+                    metadata: getMetadata()
+                })
+            });
+
+            if (!response.ok) {
+                console.error('❌ Proxy Error:', response.status, response.statusText);
+                throw new Error(`Chat request failed: ${response.status}`);
+            }
+
+            const data = await response.json();
+            console.log('🤖 AI Response:', data);
+
+            // Handle response format - could be {output: "..."} or [{output: "..."}] or {text: "..."}
+            let output = '';
+
+            if (Array.isArray(data)) {
+                const first = data[0];
+                output = first.output || first.text || first.message || first.response || (typeof first === 'string' ? first : '');
+            } else {
+                output = data.output || data.text || data.message || data.response;
+            }
+
+            if (output) {
+                return { output: output };
+            } else {
+                console.warn('⚠️ Unexpected response format:', data);
+                // Try to stringify if it's not empty
+                if (data && Object.keys(data).length > 0) {
+                    return { output: typeof data === 'string' ? data : JSON.stringify(data) };
+                }
+                return { output: 'I received your message but got an empty response.' };
+            }
+        } catch (err) {
+            console.error('❌ AI Error:', err);
+            throw err;
+        }
+    }
+
+    // ============================================
+    // HANDLE FORM SUBMIT
+    // ============================================
+    chatForm.onsubmit = async (e) => {
         e.preventDefault();
         const content = chatInput.value.trim();
         if (!content) return;
 
-        // Post to API (to trigger dashboard update and save to DB)
-        fetch(`${API_URL}/api/messages`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId, sender: 'user', content })
-        });
-
+        // Show user message immediately
+        addMessage('user', content);
         chatInput.value = '';
+        setLoading(true);
+
+        // Save user message to database
+        await saveMessageToDB('user', content);
+
+        if (sessionMode === 'ai') {
+            // AI MODE: Send to n8n webhook
+            showTypingIndicator();
+            try {
+                const aiResponse = await sendToN8nAI(content);
+                removeTypingIndicator();
+
+                if (aiResponse && aiResponse.output) {
+                    // Check for human handoff signals
+                    const handoffPhrases = [
+                        'speak with a human',
+                        'human agent',
+                        'notified our support team',
+                        'someone will be with you',
+                        'transferring you',
+                        'connecting you to',
+                        'human support',
+                        'live agent'
+                    ];
+
+                    const isHandoff = handoffPhrases.some(phrase =>
+                        aiResponse.output.toLowerCase().includes(phrase.toLowerCase())
+                    );
+
+                    // Display AI response
+                    addMessage('ai', aiResponse.output);
+
+                    // Save AI response to database
+                    await saveMessageToDB('ai', aiResponse.output);
+
+                    // Switch to human mode if handoff detected
+                    if (isHandoff) {
+                        setMode('human');
+                        addSystemMessage('🔄 Switching to human support...');
+                    }
+                } else {
+                    throw new Error('Invalid AI response');
+                }
+            } catch (err) {
+                removeTypingIndicator();
+                addSystemMessage('⚠️ AI unavailable. Connecting to human support...');
+                setMode('human');
+            }
+        } else {
+            // HUMAN MODE: Message already saved, will be picked up by dashboard via socket
+            statusText.textContent = 'Message sent • Waiting for response...';
+        }
+
+        setLoading(false);
     };
+
+    // ============================================
+    // SOCKET.IO INITIALIZATION
+    // ============================================
+    function initSocket() {
+        socket = io(CONFIG.API_URL);
+        socket.emit('join_session', sessionId);
+
+        // Load chat history
+        fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}/messages`)
+            .then(res => res.json())
+            .then(msgs => {
+                msgs.forEach(m => {
+                    if (m.sender === 'user') {
+                        addMessage('user', m.content);
+                    } else if (m.sender === 'admin') {
+                        addMessage('admin', m.content);
+                    } else if (m.sender === 'ai') {
+                        addMessage('ai', m.content);
+                    }
+                });
+            })
+            .catch(err => console.error('Failed to load history:', err));
+
+        // Check session mode from server
+        fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}`)
+            .then(res => res.json())
+            .then(session => {
+                if (session && session.status === 'human') {
+                    setMode('human');
+                }
+            })
+            .catch(() => { });
+
+        // Listen for new messages (from human agents)
+        socket.on('new_message', (msg) => {
+            if (msg.sessionId === sessionId && msg.sender === 'admin') {
+                addMessage('admin', msg.content);
+                statusText.textContent = 'Agent replied • Connected';
+            }
+        });
+    }
+
+    // ============================================
+    // TOGGLE HANDLERS
+    // ============================================
+    chatButton.onclick = () => chatWindow.classList.toggle('open');
+    chatClose.onclick = () => chatWindow.classList.remove('open');
+
+    // ============================================
+    // LOAD SOCKET.IO AND INITIALIZE
+    // ============================================
+    const script = document.createElement('script');
+    script.src = CONFIG.SOCKET_IO_CDN;
+    script.onload = initSocket;
+    document.head.appendChild(script);
+
+    // Initialize mode display
+    setMode(sessionMode);
 
 })();

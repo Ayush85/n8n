@@ -47,22 +47,75 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// N8N Webhook URL (from environment or default)
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/b5ecaafa-5b1f-483f-b03e-4275a31bdb0a/chat';
+
+// Proxy endpoint for n8n AI chat (avoids CORS issues)
+app.post('/api/chat', async (req, res, next) => {
+    try {
+        const { action, sessionId, chatInput, metadata } = req.body;
+
+        logger.info(`Proxying chat request to n8n for session ${sessionId}`);
+
+        // Forward request to n8n webhook
+        const response = await fetch(N8N_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: action || 'sendMessage',
+                sessionId,
+                chatInput,
+                metadata
+            })
+        });
+
+        if (!response.ok) {
+            logger.error(`N8N webhook error: ${response.status} ${response.statusText}`);
+            return res.status(502).json({ error: 'AI service unavailable', status: response.status });
+        }
+
+        const responseText = await response.text();
+        logger.info(`N8N response received for session ${sessionId}`);
+
+        // Try to parse as JSON, otherwise return as text
+        try {
+            const data = JSON.parse(responseText);
+            res.json(data);
+        } catch (e) {
+            res.json({ output: responseText });
+        }
+    } catch (error) {
+        logger.error('Error proxying to n8n:', error);
+        next(error);
+    }
+});
+
 // API endpoint for external inputs (n8n or direct widget)
 app.post('/api/messages', async (req, res, next) => {
     try {
         const validatedData = MessageSchema.parse(req.body);
-        const { sessionId, sender, content } = validatedData;
+        const { sessionId, sender, content, metadata } = validatedData;
 
-        // 1. Save to database
+        // Get client IP from request
+        const clientIp = req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || 'unknown';
+
+        // Merge IP into metadata
+        const enrichedMetadata = { ...metadata, ip_address: clientIp };
+
+        // 1. Save message to database
         await pool.query(
             'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
             [sessionId, sender, content]
         );
 
-        // 2. Ensure session exists
+        // 2. Ensure session exists and update metadata
         await pool.query(
-            'INSERT INTO sessions (session_id, status) VALUES ($1, $2) ON CONFLICT (session_id) DO UPDATE SET updated_at = NOW()',
-            [sessionId, 'human'] // Defaulting to human as requested
+            `INSERT INTO sessions (session_id, status, metadata) 
+             VALUES ($1, $2, $3) 
+             ON CONFLICT (session_id) DO UPDATE SET 
+                updated_at = NOW(),
+                metadata = COALESCE(sessions.metadata, '{}')::jsonb || $3::jsonb`,
+            [sessionId, 'human', JSON.stringify(enrichedMetadata)]
         );
 
         // 3. Emit to socket room for this session
@@ -73,10 +126,10 @@ app.post('/api/messages', async (req, res, next) => {
             timestamp: new Date()
         });
 
-        // 4. Update dashbord lists
+        // 4. Update dashboard lists
         io.emit('session_update', { sessionId, lastMessage: content });
 
-        logger.info(`Message received for session ${sessionId} from ${sender}`);
+        logger.info(`Message received for session ${sessionId} from ${sender} | IP: ${clientIp}`);
         res.json({ success: true });
     } catch (error) {
         next(error);
@@ -108,6 +161,23 @@ app.get('/api/sessions/:sessionId/messages', async (req, res, next) => {
             [sessionId]
         );
         res.json(result.rows);
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Get single session by ID
+app.get('/api/sessions/:sessionId', async (req, res, next) => {
+    const { sessionId } = req.params;
+    try {
+        const result = await pool.query(
+            'SELECT * FROM sessions WHERE session_id = $1',
+            [sessionId]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+        res.json(result.rows[0]);
     } catch (error) {
         next(error);
     }
