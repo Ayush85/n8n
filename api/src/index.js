@@ -50,6 +50,85 @@ app.get('/health', (req, res) => {
 // N8N Webhook URL (from environment or default)
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/b5ecaafa-5b1f-483f-b03e-4275a31bdb0a/chat';
 
+// Helper function to parse n8n response (handles multiple layers of JSON stringification)
+function parseN8nResponse(data) {
+    let parsed = data;
+
+    // Keep parsing if it's a string that looks like JSON
+    while (typeof parsed === 'string') {
+        try {
+            parsed = JSON.parse(parsed);
+        } catch (e) {
+            // Not JSON, return as is
+            break;
+        }
+    }
+
+    // Now extract the actual message from various possible formats
+    // Format 1: [{answer: "message"}] or [{response: "message"}]
+    if (Array.isArray(parsed) && parsed.length > 0) {
+        const firstItem = parsed[0];
+
+        // Handle [{answer: "..."}]
+        if (firstItem.answer) {
+            return formatMessage(firstItem.answer);
+        }
+
+        // Handle [{response: [...]}] or [{response: "..."}]
+        if (firstItem.response) {
+            const responseData = firstItem.response;
+            if (Array.isArray(responseData) && responseData.length > 0) {
+                return formatMessage(responseData[0]);
+            }
+            return formatMessage(responseData);
+        }
+
+        // If first item is a string, return it
+        if (typeof firstItem === 'string') {
+            return formatMessage(firstItem);
+        }
+    }
+
+    // Format 2: {response: ["message"]} or {response: "message"}
+    if (parsed && typeof parsed === 'object' && parsed.response) {
+        if (Array.isArray(parsed.response) && parsed.response.length > 0) {
+            return formatMessage(parsed.response[0]);
+        }
+        return formatMessage(parsed.response);
+    }
+
+    // Format 3: {answer: "message"}
+    if (parsed && typeof parsed === 'object' && parsed.answer) {
+        return formatMessage(parsed.answer);
+    }
+
+    // Format 4: {output: ...}, {text: ...}, {result: ...}, etc.
+    if (parsed && typeof parsed === 'object') {
+        const message = parsed.output || parsed.text || parsed.message || parsed.result;
+        if (message) {
+            // Recursively parse in case it's still stringified
+            return parseN8nResponse(message);
+        }
+    }
+
+    // Format 5: Direct string or already parsed
+    return formatMessage(parsed);
+}
+
+// Helper function to format message (convert literal \n to actual newlines)
+function formatMessage(message) {
+    if (typeof message !== 'string') {
+        return message;
+    }
+
+    // Replace literal \n with actual newlines
+    // Also handle \r\n and just \r
+    return message
+        .replace(/\\n/g, '\n')
+        .replace(/\\r\\n/g, '\n')
+        .replace(/\\r/g, '\n');
+}
+
 // Human handoff detection phrases
 const HUMAN_HANDOFF_PHRASES = [
     'chat with human',
@@ -82,9 +161,9 @@ app.post('/api/chat', async (req, res, next) => {
         // Check if user wants to chat with human
         if (isHumanHandoffRequest(chatInput)) {
             logger.info(`Human handoff requested for session ${sessionId}`);
-            
+
             const handoffMessage = "Thank you for reaching out! Our support team has been notified and will connect with you within 30 minutes. Please stay in the chat, and we'll be with you shortly! 🙋‍♂️";
-            
+
             // Update session status to 'human'
             await pool.query(
                 "UPDATE sessions SET status = 'human', updated_at = NOW() WHERE session_id = $1",
@@ -100,7 +179,7 @@ app.post('/api/chat', async (req, res, next) => {
             // Notify via socket
             io.to(sessionId).emit('status_change', { sessionId, status: 'human' });
             io.emit('session_update', { sessionId, status: 'human' });
-            
+
             // Emit the AI message to socket
             io.to(sessionId).emit('new_message', {
                 sessionId,
@@ -110,7 +189,7 @@ app.post('/api/chat', async (req, res, next) => {
             });
 
             // Return human handoff response
-            return res.json({ 
+            return res.json({
                 output: handoffMessage,
                 handoff: true,
                 saved: true,  // Tell widget not to save again
@@ -143,12 +222,20 @@ app.post('/api/chat', async (req, res, next) => {
         logger.info(`N8N response received for session ${sessionId}`);
 
         // Try to parse as JSON, otherwise return as text
+        let data;
         try {
-            const data = JSON.parse(responseText);
-            res.json(data);
+            data = JSON.parse(responseText);
         } catch (e) {
-            res.json({ output: responseText });
+            data = responseText;
         }
+
+        // Parse the n8n response to extract the actual message
+        const actualMessage = parseN8nResponse(data);
+
+        logger.info(`Parsed message from n8n:`, actualMessage);
+
+        // Return in a consistent format
+        res.json({ output: actualMessage });
     } catch (error) {
         logger.error('Error proxying to n8n:', error);
         next(error);
@@ -267,6 +354,56 @@ app.put('/api/sessions/:sessionId/status', async (req, res, next) => {
     }
 });
 
+// Update session user info (from pre-chat form)
+app.put('/api/sessions/:sessionId/user-info', async (req, res, next) => {
+    const { sessionId } = req.params;
+    const { contact, email, phone } = req.body;
+    try {
+        // First ensure the session exists and save user contact
+        // Also set customer_name to the contact so it displays instead of "Anonymous"
+        await pool.query(
+            `INSERT INTO sessions (session_id, customer_name, status, user_contact, metadata) 
+             VALUES ($1, $2, 'ai', $2, $3) 
+             ON CONFLICT (session_id) DO UPDATE SET 
+                updated_at = NOW(),
+                customer_name = $2,
+                user_contact = $2,
+                metadata = COALESCE(sessions.metadata, '{}')::jsonb || $3::jsonb`,
+            [sessionId, contact, JSON.stringify({ user_contact: contact, user_email: email, user_phone: phone })]
+        );
+
+        logger.info(`User info saved for session ${sessionId}: ${contact}`);
+        res.json({ success: true });
+    } catch (error) {
+        next(error);
+    }
+});
+
+// Find existing session by contact (for session continuity)
+app.get('/api/sessions/by-contact/:contact', async (req, res, next) => {
+    const { contact } = req.params;
+    try {
+        const result = await pool.query(
+            `SELECT session_id, customer_name, user_contact, status, created_at, updated_at
+             FROM sessions 
+             WHERE user_contact = $1 
+             ORDER BY updated_at DESC 
+             LIMIT 1`,
+            [contact]
+        );
+
+        if (result.rows.length === 0) {
+            logger.info(`No existing session found for contact: ${contact}`);
+            return res.json({ found: false });
+        }
+
+        logger.info(`Found existing session for contact ${contact}: ${result.rows[0].session_id}`);
+        res.json({ found: true, session: result.rows[0] });
+    } catch (error) {
+        next(error);
+    }
+});
+
 // ============================================
 // ANALYTICS ENDPOINTS
 // ============================================
@@ -276,10 +413,10 @@ app.get('/api/analytics', async (req, res, next) => {
     try {
         // Total sessions
         const totalSessions = await pool.query('SELECT COUNT(*) as count FROM sessions');
-        
+
         // Total messages
         const totalMessages = await pool.query('SELECT COUNT(*) as count FROM messages');
-        
+
         // Messages by sender type
         const messagesBySender = await pool.query(`
             SELECT sender, COUNT(*) as count 
@@ -287,21 +424,21 @@ app.get('/api/analytics', async (req, res, next) => {
             GROUP BY sender 
             ORDER BY count DESC
         `);
-        
+
         // Active sessions (messages in last 24 hours)
         const activeSessions = await pool.query(`
             SELECT COUNT(DISTINCT session_id) as count 
             FROM messages 
             WHERE created_at > NOW() - INTERVAL '24 hours'
         `);
-        
+
         // Sessions by status
         const sessionsByStatus = await pool.query(`
             SELECT status, COUNT(*) as count 
             FROM sessions 
             GROUP BY status
         `);
-        
+
         // Messages per day (last 7 days)
         const messagesPerDay = await pool.query(`
             SELECT DATE(created_at) as date, COUNT(*) as count 
@@ -310,13 +447,13 @@ app.get('/api/analytics', async (req, res, next) => {
             GROUP BY DATE(created_at) 
             ORDER BY date DESC
         `);
-        
+
         // Average messages per session
         const avgMessagesPerSession = await pool.query(`
             SELECT AVG(msg_count)::numeric(10,2) as avg 
             FROM (SELECT session_id, COUNT(*) as msg_count FROM messages GROUP BY session_id) as subq
         `);
-        
+
         // Peak hours (messages grouped by hour)
         const peakHours = await pool.query(`
             SELECT EXTRACT(HOUR FROM created_at) as hour, COUNT(*) as count 
@@ -370,21 +507,21 @@ app.get('/api/sessions/:sessionId/summary', async (req, res, next) => {
             'SELECT * FROM messages WHERE session_id = $1 ORDER BY created_at ASC',
             [sessionId]
         );
-        
+
         // Get session info
         const session = await pool.query(
             'SELECT * FROM sessions WHERE session_id = $1',
             [sessionId]
         );
-        
+
         if (session.rows.length === 0) {
             return res.status(404).json({ error: 'Session not found' });
         }
-        
+
         const userMessages = messages.rows.filter(m => m.sender === 'user');
         const aiMessages = messages.rows.filter(m => m.sender === 'ai');
         const adminMessages = messages.rows.filter(m => m.sender === 'admin');
-        
+
         // Calculate session duration
         let sessionDuration = 0;
         if (messages.rows.length > 1) {
@@ -392,11 +529,11 @@ app.get('/api/sessions/:sessionId/summary', async (req, res, next) => {
             const lastMsg = new Date(messages.rows[messages.rows.length - 1].created_at);
             sessionDuration = Math.round((lastMsg - firstMsg) / 1000); // in seconds
         }
-        
+
         // Extract keywords from user messages (simple word frequency)
         const wordCounts = {};
         const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare', 'ought', 'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'between', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'just', 'and', 'but', 'if', 'or', 'because', 'until', 'while', 'this', 'that', 'these', 'those', 'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'you', 'your', 'yours', 'he', 'him', 'his', 'she', 'her', 'hers', 'it', 'its', 'they', 'them', 'their', 'what', 'which', 'who', 'whom']);
-        
+
         userMessages.forEach(msg => {
             const words = msg.content.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/);
             words.forEach(word => {
@@ -405,12 +542,12 @@ app.get('/api/sessions/:sessionId/summary', async (req, res, next) => {
                 }
             });
         });
-        
+
         const topKeywords = Object.entries(wordCounts)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 10)
             .map(([word, count]) => ({ word, count }));
-        
+
         res.json({
             sessionId,
             status: session.rows[0].status,
@@ -444,7 +581,7 @@ app.get('/api/sessions/:sessionId/summary', async (req, res, next) => {
 app.get('/api/analytics/top-queries', async (req, res, next) => {
     try {
         const limit = parseInt(req.query.limit) || 20;
-        
+
         // Get recent user messages
         const result = await pool.query(`
             SELECT content, created_at, session_id 
@@ -453,7 +590,7 @@ app.get('/api/analytics/top-queries', async (req, res, next) => {
             ORDER BY created_at DESC 
             LIMIT 100
         `);
-        
+
         // Extract and count common phrases/questions
         const queryCounts = {};
         result.rows.forEach(row => {
@@ -462,12 +599,12 @@ app.get('/api/analytics/top-queries', async (req, res, next) => {
                 queryCounts[content] = (queryCounts[content] || 0) + 1;
             }
         });
-        
+
         const topQueries = Object.entries(queryCounts)
             .sort((a, b) => b[1] - a[1])
             .slice(0, limit)
             .map(([query, count]) => ({ query, count }));
-        
+
         res.json({ topQueries, totalUserMessages: result.rows.length });
     } catch (error) {
         next(error);
@@ -491,6 +628,12 @@ io.on('connection', (socket) => {
         if (!sessionId) return;
         socket.join(sessionId);
         logger.info(`Client ${socket.id} joined session: ${sessionId}`);
+    });
+
+    socket.on('leave_session', (sessionId) => {
+        if (!sessionId) return;
+        socket.leave(sessionId);
+        logger.info(`Client ${socket.id} left session: ${sessionId}`);
     });
 
     socket.on('send_manual_message', async (data) => {

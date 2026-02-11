@@ -19,7 +19,7 @@ async function migrate() {
         console.log(`Host: ${process.env.DB_HOST}`);
         console.log(`Database: ${process.env.DB_NAME}`);
         console.log(`User: ${process.env.DB_USER}`);
-        
+
         // Test connection
         const testResult = await pool.query('SELECT NOW()');
         console.log('✅ Database connected at:', testResult.rows[0].now);
@@ -31,6 +31,7 @@ async function migrate() {
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id TEXT PRIMARY KEY,
                 customer_name TEXT,
+                user_contact TEXT,
                 status TEXT DEFAULT 'human',
                 summary TEXT,
                 metadata JSONB DEFAULT '{}',
@@ -39,6 +40,18 @@ async function migrate() {
             );
         `);
         console.log('✅ Sessions table created/verified');
+
+        // Add user_contact column if it doesn't exist (for existing tables)
+        await pool.query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                               WHERE table_name='sessions' AND column_name='user_contact') THEN
+                    ALTER TABLE sessions ADD COLUMN user_contact TEXT;
+                END IF;
+            END $$;
+        `);
+        console.log('✅ user_contact column verified');
 
         // Create messages table
         await pool.query(`

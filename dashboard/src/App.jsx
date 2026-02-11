@@ -136,7 +136,7 @@ function App() {
             // Get all sessions first
             const sessionsRes = await fetch(`${SOCKET_URL}/api/sessions`);
             const sessionsData = await sessionsRes.json();
-            
+
             // Fetch summary for each session (limit to recent 20 for performance)
             const recentSessions = sessionsData.slice(0, 20);
             const summaries = await Promise.all(
@@ -144,8 +144,8 @@ function App() {
                     try {
                         const res = await fetch(`${SOCKET_URL}/api/sessions/${session.session_id}/summary`);
                         const summary = await res.json();
-                        return { 
-                            ...summary, 
+                        return {
+                            ...summary,
                             last_message_at: session.last_message_at,
                             customer_name: session.customer_name
                         };
@@ -241,22 +241,20 @@ function App() {
                     <div className="flex gap-2 mb-6">
                         <button
                             onClick={() => setCurrentView('chats')}
-                            className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${
-                                currentView === 'chats'
-                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                                    : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
-                            }`}
+                            className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${currentView === 'chats'
+                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                                : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
+                                }`}
                         >
                             <MessageSquare size={16} />
                             Chats
                         </button>
                         <button
                             onClick={() => setCurrentView('analytics')}
-                            className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${
-                                currentView === 'analytics'
-                                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30'
-                                    : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
-                            }`}
+                            className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${currentView === 'analytics'
+                                ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30'
+                                : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
+                                }`}
                         >
                             <BarChart3 size={16} />
                             Analytics
@@ -306,6 +304,14 @@ function App() {
                                             {session.last_message_at ? format(new Date(session.last_message_at), 'HH:mm') : ''}
                                         </span>
                                     </div>
+                                    {/* Show user contact only if it's different from customer name */}
+                                    {(session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone) &&
+                                        (session.customer_name !== session.user_contact &&
+                                            session.customer_name !== (session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone)) && (
+                                            <p className="text-[11px] text-emerald-400 truncate mb-0.5">
+                                                📧 {session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone}
+                                            </p>
+                                        )}
                                     <p className="text-[12px] text-slate-400 truncate opacity-70 leading-relaxed font-light">{session.last_message || 'Started a conversation'}</p>
                                 </div>
                                 {activeSession?.session_id === session.session_id && (
@@ -404,7 +410,7 @@ function App() {
                                     <p className="text-[10px] text-slate-400 mt-0.5">User message summaries & insights</p>
                                 </div>
                             </div>
-                            <button 
+                            <button
                                 onClick={() => { fetchAnalytics(); fetchTopQueries(); }}
                                 className="px-4 py-2 rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 hover:text-white transition-all flex items-center gap-2 text-xs font-medium"
                             >
@@ -476,10 +482,9 @@ function App() {
                                                 {analytics.messagesBySender?.map((item, idx) => (
                                                     <div key={idx} className="flex items-center justify-between">
                                                         <div className="flex items-center gap-2">
-                                                            <div className={`w-3 h-3 rounded-full ${
-                                                                item.sender === 'user' ? 'bg-blue-500' : 
+                                                            <div className={`w-3 h-3 rounded-full ${item.sender === 'user' ? 'bg-blue-500' :
                                                                 item.sender === 'ai' ? 'bg-green-500' : 'bg-purple-500'
-                                                            }`}></div>
+                                                                }`}></div>
                                                             <span className="text-sm text-slate-300 capitalize">{item.sender}</span>
                                                         </div>
                                                         <span className="text-sm font-mono text-white">{item.count}</span>
@@ -498,9 +503,8 @@ function App() {
                                                 {analytics.sessionsByStatus?.map((item, idx) => (
                                                     <div key={idx} className="flex items-center justify-between">
                                                         <div className="flex items-center gap-2">
-                                                            <div className={`w-3 h-3 rounded-full ${
-                                                                item.status === 'ai' ? 'bg-green-500' : 'bg-orange-500'
-                                                            }`}></div>
+                                                            <div className={`w-3 h-3 rounded-full ${item.status === 'ai' ? 'bg-green-500' : 'bg-orange-500'
+                                                                }`}></div>
                                                             <span className="text-sm text-slate-300 uppercase">{item.status} Mode</span>
                                                         </div>
                                                         <span className="text-sm font-mono text-white">{item.count}</span>
@@ -520,7 +524,7 @@ function App() {
                                                     <div key={idx} className="flex items-center gap-3">
                                                         <span className="text-xs text-slate-400 w-16">{String(item.hour).padStart(2, '0')}:00</span>
                                                         <div className="flex-1 bg-slate-700/50 rounded-full h-2 overflow-hidden">
-                                                            <div 
+                                                            <div
                                                                 className="h-full bg-gradient-to-r from-orange-500 to-yellow-500 rounded-full"
                                                                 style={{ width: `${(item.count / (analytics.peakHours[0]?.count || 1)) * 100}%` }}
                                                             ></div>
@@ -542,7 +546,7 @@ function App() {
                                                     <div key={idx} className="flex items-center gap-3">
                                                         <span className="text-xs text-slate-400 w-20">{format(new Date(item.date), 'MMM dd')}</span>
                                                         <div className="flex-1 bg-slate-700/50 rounded-full h-2 overflow-hidden">
-                                                            <div 
+                                                            <div
                                                                 className="h-full bg-gradient-to-r from-purple-500 to-blue-500 rounded-full"
                                                                 style={{ width: `${(item.count / Math.max(...analytics.messagesPerDay.map(d => d.count), 1)) * 100}%` }}
                                                             ></div>
@@ -604,16 +608,15 @@ function App() {
                                                                 <span className="text-[10px] px-2 py-1 bg-slate-700/50 text-slate-300 rounded-full">
                                                                     {summary.stats?.totalMessages || 0} msgs
                                                                 </span>
-                                                                <span className={`text-[10px] px-2 py-1 rounded-full ${
-                                                                    summary.status === 'ai' 
-                                                                        ? 'bg-green-500/20 text-green-400' 
-                                                                        : 'bg-orange-500/20 text-orange-400'
-                                                                }`}>
+                                                                <span className={`text-[10px] px-2 py-1 rounded-full ${summary.status === 'ai'
+                                                                    ? 'bg-green-500/20 text-green-400'
+                                                                    : 'bg-orange-500/20 text-orange-400'
+                                                                    }`}>
                                                                     {summary.status === 'ai' ? '🤖 AI' : '👤 Human'}
                                                                 </span>
                                                             </div>
                                                         </div>
-                                                        
+
                                                         {/* Chat History Summary */}
                                                         <div className="mb-3">
                                                             <p className="text-[10px] text-slate-500 mb-2 flex items-center gap-1">
@@ -623,17 +626,15 @@ function App() {
                                                             <div className="bg-slate-800/50 rounded-lg p-3 max-h-64 overflow-y-auto space-y-2">
                                                                 {summary.chatHistory?.length > 0 ? (
                                                                     summary.chatHistory.map((msg, midx) => (
-                                                                        <div key={midx} className={`flex gap-2 items-start p-2 rounded-lg ${
-                                                                            msg.sender === 'user' ? 'bg-blue-500/10' : 
+                                                                        <div key={midx} className={`flex gap-2 items-start p-2 rounded-lg ${msg.sender === 'user' ? 'bg-blue-500/10' :
                                                                             msg.sender === 'ai' ? 'bg-green-500/10' : 'bg-orange-500/10'
-                                                                        }`}>
+                                                                            }`}>
                                                                             <div className="flex flex-col min-w-[70px]">
-                                                                                <span className={`text-[10px] font-semibold ${
-                                                                                    msg.sender === 'user' ? 'text-blue-400' : 
+                                                                                <span className={`text-[10px] font-semibold ${msg.sender === 'user' ? 'text-blue-400' :
                                                                                     msg.sender === 'ai' ? 'text-green-400' : 'text-orange-400'
-                                                                                }`}>
-                                                                                    {msg.sender === 'user' ? '👤 User' : 
-                                                                                     msg.sender === 'ai' ? '🤖 AI' : '👨‍💼 Admin'}
+                                                                                    }`}>
+                                                                                    {msg.sender === 'user' ? '👤 User' :
+                                                                                        msg.sender === 'ai' ? '🤖 AI' : '👨‍💼 Admin'}
                                                                                 </span>
                                                                                 <span className="text-[9px] text-slate-600">
                                                                                     {format(new Date(msg.timestamp), 'HH:mm')}
@@ -703,7 +704,17 @@ function App() {
                                     <User className="w-5 h-5 ml-0.5" />
                                 </div>
                                 <div>
-                                    <h2 className="font-bold text-[17px] text-white tracking-tight">{activeSession.customer_name || 'Anonymous User'}</h2>
+                                    <div className="flex items-center gap-2">
+                                        <h2 className="font-bold text-[17px] text-white tracking-tight">{activeSession.customer_name || 'Anonymous User'}</h2>
+                                        {/* User Contact Badge - only show if different from name */}
+                                        {(activeSession.user_contact || activeSession.metadata?.user_contact || activeSession.metadata?.user_email || activeSession.metadata?.user_phone) &&
+                                            (activeSession.customer_name !== activeSession.user_contact &&
+                                                activeSession.customer_name !== (activeSession.metadata?.user_contact || activeSession.metadata?.user_email || activeSession.metadata?.user_phone)) && (
+                                                <span className="text-[10px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full font-medium">
+                                                    {activeSession.user_contact || activeSession.metadata?.user_contact || activeSession.metadata?.user_email || activeSession.metadata?.user_phone}
+                                                </span>
+                                            )}
+                                    </div>
                                     <div className="flex items-center gap-2 mt-0.5">
                                         <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
                                         <span className="text-[10px] text-slate-400 font-mono uppercase tracking-widest">{activeSession.session_id}</span>
@@ -711,13 +722,12 @@ function App() {
                                 </div>
                             </div>
                             <div className="flex items-center gap-3">
-                                <button 
+                                <button
                                     onClick={() => setShowSessionSummary(!showSessionSummary)}
-                                    className={`px-4 py-2 rounded-xl border flex items-center gap-2 transition-all ${
-                                        showSessionSummary 
-                                            ? 'bg-cyan-600/20 border-cyan-500/30 text-cyan-400' 
-                                            : 'border-white/10 text-slate-400 hover:bg-white/5 hover:text-white'
-                                    }`}
+                                    className={`px-4 py-2 rounded-xl border flex items-center gap-2 transition-all ${showSessionSummary
+                                        ? 'bg-cyan-600/20 border-cyan-500/30 text-cyan-400'
+                                        : 'border-white/10 text-slate-400 hover:bg-white/5 hover:text-white'
+                                        }`}
                                 >
                                     <FileText size={16} />
                                     <span className="text-xs font-medium">Summary</span>
@@ -735,43 +745,42 @@ function App() {
                         <div className="flex-1 flex overflow-hidden">
                             {/* Chat Screen */}
                             <div className={`flex-1 overflow-y-auto p-10 space-y-8 custom-scrollbar scroll-smooth ${showSessionSummary ? 'pr-4' : ''}`}>
-                            {messages.map((msg, idx) => {
-                                const isPreviousSameSender = idx > 0 && messages[idx - 1].sender === msg.sender;
-                                const getSenderLabel = (sender) => {
-                                    if (sender === 'admin') return 'You';
-                                    if (sender === 'ai') return 'AI Bot';
-                                    return 'Customer';
-                                };
-                                return (
-                                    <div key={idx} className={`flex ${msg.sender === 'admin' ? 'justify-end' : 'justify-start'} ${isPreviousSameSender ? '-mt-6' : ''}`}>
-                                        <div className={`max-w-[75%] group flex flex-col ${msg.sender === 'admin' ? 'items-end' : 'items-start'}`}>
-                                            {!isPreviousSameSender && (
-                                                <div className="flex items-center gap-3 mb-2 px-1">
-                                                    <span className={`text-[10px] font-bold uppercase tracking-[0.2em] ${
-                                                        msg.sender === 'ai' ? 'text-green-400' : 'text-slate-400'
-                                                    }`}>{getSenderLabel(msg.sender)}</span>
-                                                </div>
-                                            )}
-                                            <div className={`relative px-5 py-4 rounded-3xl shadow-2xl transition-all duration-300 ${msg.sender === 'admin'
-                                                ? 'bg-blue-600 text-white rounded-tr-none border border-blue-400/20 ring-1 ring-blue-500/30'
-                                                : msg.sender === 'ai' 
-                                                    ? 'bg-green-900/40 backdrop-blur-md border border-green-500/20 text-slate-100 rounded-tl-none ring-1 ring-green-500/10'
-                                                    : 'bg-slate-800/80 backdrop-blur-md border border-white/10 text-slate-100 rounded-tl-none ring-1 ring-white/5'
-                                                }`}>
-                                                <p className="text-[14px] leading-relaxed font-normal whitespace-pre-wrap">{msg.content}</p>
-                                                <div className={`absolute bottom-1 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-500 translate-y-1 group-hover:translate-y-0`}>
-                                                    <span className="text-[9px] font-medium text-white/40 font-mono tracking-tighter">
-                                                        {format(new Date(msg.created_at || new Date()), 'HH:mm')}
-                                                    </span>
-                                                    {msg.sender === 'admin' && <CheckCheck size={10} className="text-white/60" />}
+                                {messages.map((msg, idx) => {
+                                    const isPreviousSameSender = idx > 0 && messages[idx - 1].sender === msg.sender;
+                                    const getSenderLabel = (sender) => {
+                                        if (sender === 'admin') return 'You';
+                                        if (sender === 'ai') return 'AI Bot';
+                                        return 'Customer';
+                                    };
+                                    return (
+                                        <div key={idx} className={`flex ${msg.sender === 'admin' ? 'justify-end' : 'justify-start'} ${isPreviousSameSender ? '-mt-6' : ''}`}>
+                                            <div className={`max-w-[75%] group flex flex-col ${msg.sender === 'admin' ? 'items-end' : 'items-start'}`}>
+                                                {!isPreviousSameSender && (
+                                                    <div className="flex items-center gap-3 mb-2 px-1">
+                                                        <span className={`text-[10px] font-bold uppercase tracking-[0.2em] ${msg.sender === 'ai' ? 'text-green-400' : 'text-slate-400'
+                                                            }`}>{getSenderLabel(msg.sender)}</span>
+                                                    </div>
+                                                )}
+                                                <div className={`relative px-5 py-4 rounded-3xl shadow-2xl transition-all duration-300 ${msg.sender === 'admin'
+                                                    ? 'bg-blue-600 text-white rounded-tr-none border border-blue-400/20 ring-1 ring-blue-500/30'
+                                                    : msg.sender === 'ai'
+                                                        ? 'bg-green-900/40 backdrop-blur-md border border-green-500/20 text-slate-100 rounded-tl-none ring-1 ring-green-500/10'
+                                                        : 'bg-slate-800/80 backdrop-blur-md border border-white/10 text-slate-100 rounded-tl-none ring-1 ring-white/5'
+                                                    }`}>
+                                                    <p className="text-[14px] leading-relaxed font-normal whitespace-pre-wrap">{msg.content}</p>
+                                                    <div className={`absolute bottom-1 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-500 translate-y-1 group-hover:translate-y-0`}>
+                                                        <span className="text-[9px] font-medium text-white/40 font-mono tracking-tighter">
+                                                            {format(new Date(msg.created_at || new Date()), 'HH:mm')}
+                                                        </span>
+                                                        {msg.sender === 'admin' && <CheckCheck size={10} className="text-white/60" />}
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
-                                    </div>
-                                )
-                            })}
-                            <div ref={messagesEndRef} />
-                        </div>
+                                    )
+                                })}
+                                <div ref={messagesEndRef} />
+                            </div>
 
                             {/* Session Summary Panel */}
                             {showSessionSummary && sessionSummary && (
@@ -783,7 +792,7 @@ function App() {
                                                 <FileText size={16} className="text-cyan-400" />
                                                 Chat Summary
                                             </h3>
-                                            <button 
+                                            <button
                                                 onClick={() => setShowSessionSummary(false)}
                                                 className="w-6 h-6 rounded-lg bg-white/5 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-all"
                                             >
@@ -819,8 +828,8 @@ function App() {
                                                     <Timer size={14} className="text-orange-400" />
                                                 </div>
                                                 <p className="text-lg font-bold text-white">
-                                                    {sessionSummary.stats?.sessionDurationSeconds 
-                                                        ? sessionSummary.stats.sessionDurationSeconds < 60 
+                                                    {sessionSummary.stats?.sessionDurationSeconds
+                                                        ? sessionSummary.stats.sessionDurationSeconds < 60
                                                             ? `${sessionSummary.stats.sessionDurationSeconds}s`
                                                             : `${Math.round(sessionSummary.stats.sessionDurationSeconds / 60)}m`
                                                         : '0s'}
@@ -833,11 +842,10 @@ function App() {
                                         <div className="bg-slate-800/30 border border-white/5 rounded-xl p-3 mb-4">
                                             <div className="flex items-center justify-between">
                                                 <span className="text-xs text-slate-400">Mode</span>
-                                                <span className={`text-xs font-bold uppercase px-2 py-1 rounded-lg ${
-                                                    sessionSummary.status === 'ai' 
-                                                        ? 'bg-green-600/20 text-green-400' 
-                                                        : 'bg-orange-600/20 text-orange-400'
-                                                }`}>
+                                                <span className={`text-xs font-bold uppercase px-2 py-1 rounded-lg ${sessionSummary.status === 'ai'
+                                                    ? 'bg-green-600/20 text-green-400'
+                                                    : 'bg-orange-600/20 text-orange-400'
+                                                    }`}>
                                                     {sessionSummary.status === 'ai' ? '🤖 AI Mode' : '👤 Human Mode'}
                                                 </span>
                                             </div>
@@ -852,8 +860,8 @@ function App() {
                                                 </h4>
                                                 <div className="flex flex-wrap gap-2">
                                                     {sessionSummary.topKeywords.slice(0, 8).map((kw, idx) => (
-                                                        <span 
-                                                            key={idx} 
+                                                        <span
+                                                            key={idx}
                                                             className="px-2 py-1 bg-cyan-600/10 text-cyan-300 rounded-lg text-[11px] border border-cyan-500/20"
                                                         >
                                                             {kw.word}
@@ -873,24 +881,22 @@ function App() {
                                                 </h4>
                                                 <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar pr-1">
                                                     {sessionSummary.chatHistory.map((msg, idx) => (
-                                                        <div 
-                                                            key={idx} 
-                                                            className={`rounded-xl p-3 border transition-all ${
-                                                                msg.sender === 'user' 
-                                                                    ? 'bg-blue-500/10 border-blue-500/20' 
-                                                                    : msg.sender === 'ai'
+                                                        <div
+                                                            key={idx}
+                                                            className={`rounded-xl p-3 border transition-all ${msg.sender === 'user'
+                                                                ? 'bg-blue-500/10 border-blue-500/20'
+                                                                : msg.sender === 'ai'
                                                                     ? 'bg-green-500/10 border-green-500/20'
                                                                     : 'bg-orange-500/10 border-orange-500/20'
-                                                            }`}
+                                                                }`}
                                                         >
                                                             <div className="flex items-center gap-2 mb-1">
-                                                                <span className={`text-[10px] font-bold uppercase ${
-                                                                    msg.sender === 'user' 
-                                                                        ? 'text-blue-400' 
-                                                                        : msg.sender === 'ai'
+                                                                <span className={`text-[10px] font-bold uppercase ${msg.sender === 'user'
+                                                                    ? 'text-blue-400'
+                                                                    : msg.sender === 'ai'
                                                                         ? 'text-green-400'
                                                                         : 'text-orange-400'
-                                                                }`}>
+                                                                    }`}>
                                                                     {msg.sender === 'user' ? '👤 User' : msg.sender === 'ai' ? '🤖 AI Bot' : '👨‍💼 Admin'}
                                                                 </span>
                                                             </div>

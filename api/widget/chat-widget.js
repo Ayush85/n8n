@@ -20,6 +20,7 @@
     let sessionMode = localStorage.getItem('n8n_chat_mode') || 'ai'; // 'ai' or 'human'
     let isTyping = false;
     let isSessionLoaded = false; // Track if session status is loaded from server
+    let userInfo = JSON.parse(localStorage.getItem('n8n_chat_user_info') || 'null'); // {email, phone, name}
 
     // Debug log
     console.log('🚀 N8N Chat Widget Initialized');
@@ -32,6 +33,7 @@
     window.n8nChatReset = function () {
         localStorage.removeItem('n8n_chat_session_id');
         localStorage.removeItem('n8n_chat_mode');
+        localStorage.removeItem('n8n_chat_user_info');
         console.log('✅ Chat session reset! Refresh the page.');
         location.reload();
     };
@@ -259,6 +261,101 @@
         .n8n-msg ul, .n8n-msg ol { margin: 8px 0; padding-left: 20px; }
         .n8n-msg li { margin-bottom: 4px; }
         .n8n-msg h1, .n8n-msg h2, .n8n-msg h3 { font-size: 1.1em; margin: 12px 0 8px 0; font-weight: 700; }
+
+        /* Pre-chat Form Styles */
+        .n8n-prechat-form {
+            display: flex;
+            flex-direction: column;
+            padding: 24px;
+            height: 100%;
+            background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+        }
+        .n8n-prechat-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1e293b;
+            margin-bottom: 8px;
+        }
+        .n8n-prechat-subtitle {
+            font-size: 13px;
+            color: #64748b;
+            margin-bottom: 24px;
+            line-height: 1.5;
+        }
+        .n8n-prechat-field {
+            margin-bottom: 16px;
+        }
+        .n8n-prechat-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 6px;
+        }
+        .n8n-prechat-input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            box-sizing: border-box;
+        }
+        .n8n-prechat-input:focus {
+            border-color: ${CONFIG.PRIMARY_COLOR};
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+        .n8n-prechat-input.error {
+            border-color: #ef4444;
+        }
+        .n8n-prechat-error {
+            font-size: 12px;
+            color: #ef4444;
+            margin-top: 4px;
+            display: none;
+        }
+        .n8n-prechat-error.show {
+            display: block;
+        }
+        .n8n-prechat-divider {
+            display: flex;
+            align-items: center;
+            text-align: center;
+            margin: 8px 0 16px;
+            color: #94a3b8;
+            font-size: 12px;
+        }
+        .n8n-prechat-divider::before,
+        .n8n-prechat-divider::after {
+            content: '';
+            flex: 1;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .n8n-prechat-divider span {
+            padding: 0 12px;
+        }
+        .n8n-prechat-submit {
+            background: ${CONFIG.PRIMARY_COLOR};
+            color: white;
+            border: none;
+            padding: 14px 20px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: all 0.2s;
+            margin-top: auto;
+        }
+        .n8n-prechat-submit:hover {
+            background: #1d4ed8;
+            transform: scale(1.02);
+        }
+        .n8n-prechat-submit:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
     `;
 
     // ============================================
@@ -279,8 +376,22 @@
                 </div>
                 <button class="n8n-chat-close" id="n8n-chat-close">&times;</button>
             </div>
-            <div id="n8n-chat-messages" class="n8n-chat-messages"></div>
-            <form id="n8n-chat-form" class="n8n-chat-input-area">
+            <!-- Pre-chat Form -->
+            <div id="n8n-prechat-container" class="n8n-prechat-form" style="${userInfo ? 'display: none;' : ''}">
+                <div class="n8n-prechat-title">👋 Welcome!</div>
+                <div class="n8n-prechat-subtitle">Please provide your email or phone number so we can reach you.</div>
+                <form id="n8n-prechat-form">
+                    <div class="n8n-prechat-field">
+                        <label class="n8n-prechat-label" for="n8n-prechat-contact">Email or Phone Number *</label>
+                        <input type="text" id="n8n-prechat-contact" class="n8n-prechat-input" placeholder="email@example.com or +1234567890" required>
+                        <div class="n8n-prechat-error" id="n8n-prechat-contact-error">Please enter a valid email or phone number</div>
+                    </div>
+                    <button type="submit" class="n8n-prechat-submit">Start Chat</button>
+                </form>
+            </div>
+            <!-- Chat Area -->
+            <div id="n8n-chat-messages" class="n8n-chat-messages" style="${userInfo ? '' : 'display: none;'}"></div>
+            <form id="n8n-chat-form" class="n8n-chat-input-area" style="${userInfo ? '' : 'display: none;'}">
                 <input type="text" id="n8n-chat-input" class="n8n-chat-input" placeholder="Type your message..." autocomplete="off">
                 <button type="submit" class="n8n-chat-send" id="n8n-chat-send">Send</button>
             </form>
@@ -304,6 +415,11 @@
     const modeBadge = document.getElementById('n8n-mode-badge');
     const statusText = document.getElementById('n8n-status');
 
+    // Pre-chat form elements
+    const prechatContainer = document.getElementById('n8n-prechat-container');
+    const prechatForm = document.getElementById('n8n-prechat-form');
+    const prechatContact = document.getElementById('n8n-prechat-contact');
+
     // ============================================
     // HELPER FUNCTIONS
     // ============================================
@@ -320,16 +436,174 @@
             screen_width: window.screen.width,
             screen_height: window.screen.height,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            // User info from pre-chat form
+            user_contact: userInfo?.contact || null,
+            user_email: userInfo?.email || null,
+            user_phone: userInfo?.phone || null,
         };
     }
 
+    // Helper function to scroll to bottom of messages
+    function scrollToBottom(smooth = false) {
+        if (smooth) {
+            chatMessages.scrollTo({
+                top: chatMessages.scrollHeight,
+                behavior: 'smooth'
+            });
+        } else {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    }
+
+    // Show chat interface after successful pre-chat form submission
+    function showChatInterface() {
+        prechatContainer.style.display = 'none';
+        chatMessages.style.display = 'flex';
+        chatForm.style.display = 'flex';
+        // Scroll to bottom after a short delay to ensure rendering is complete
+        setTimeout(() => scrollToBottom(), 100);
+    }
+
+    // Switch to a different session (for returning users)
+    async function switchToSession(newSessionId, status = 'ai') {
+        console.log(`🔄 Switching from session ${sessionId} to ${newSessionId}`);
+
+        // Leave old socket room if connected
+        if (socket) {
+            socket.emit('leave_session', sessionId);
+        }
+
+        // Update session ID
+        sessionId = newSessionId;
+        localStorage.setItem('n8n_chat_session_id', sessionId);
+
+        // Update mode
+        sessionMode = status;
+        localStorage.setItem('n8n_chat_mode', status);
+        setMode(status);
+
+        // Join new socket room
+        if (socket) {
+            socket.emit('join_session', sessionId);
+        }
+
+        // Clear existing messages
+        chatMessages.innerHTML = '';
+
+        // Load chat history for the new session
+        try {
+            const response = await fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}/messages`);
+            const msgs = await response.json();
+            msgs.forEach(m => {
+                if (m.sender === 'user') {
+                    addMessage('user', m.content);
+                } else if (m.sender === 'admin') {
+                    addMessage('admin', m.content);
+                } else if (m.sender === 'ai') {
+                    addMessage('ai', m.content);
+                }
+            });
+            console.log(`✅ Loaded ${msgs.length} messages for session ${sessionId}`);
+            // Scroll to bottom after loading all messages
+            setTimeout(() => scrollToBottom(), 100);
+        } catch (err) {
+            console.error('Failed to load session history:', err);
+        }
+        chatInput.focus();
+    }
+
+    // Validate email format
+    function isValidEmail(email) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    }
+
+    // Validate phone format (basic: at least 7 digits)
+    function isValidPhone(phone) {
+        const digits = phone.replace(/\D/g, '');
+        return digits.length >= 7;
+    }
+
+    // Pre-chat form submission handler
+    prechatForm.onsubmit = async (e) => {
+        e.preventDefault();
+
+        const contact = prechatContact.value.trim();
+
+        // Reset error states
+        prechatContact.classList.remove('error');
+        document.getElementById('n8n-prechat-contact-error').classList.remove('show');
+
+        // Validate - must be either valid email or valid phone
+        const isEmail = isValidEmail(contact);
+        const isPhone = isValidPhone(contact);
+
+        if (!contact || (!isEmail && !isPhone)) {
+            prechatContact.classList.add('error');
+            document.getElementById('n8n-prechat-contact-error').classList.add('show');
+            return;
+        }
+
+        // Save user info - determine if email or phone
+        userInfo = {
+            contact: contact,
+            email: isEmail ? contact : null,
+            phone: isPhone && !isEmail ? contact : null
+        };
+        localStorage.setItem('n8n_chat_user_info', JSON.stringify(userInfo));
+
+        // Check for existing session by contact (session continuity)
+        try {
+            console.log(`🔍 Checking for existing session with contact: ${contact}`);
+            const response = await fetch(`${CONFIG.API_URL}/api/sessions/by-contact/${encodeURIComponent(contact)}`);
+            const data = await response.json();
+
+            if (data.found && data.session) {
+                // Returning user - restore previous session
+                console.log(`✅ Found existing session: ${data.session.session_id}`);
+
+                // Switch to the existing session
+                await switchToSession(data.session.session_id, data.session.status || 'ai');
+
+                // Show chat interface
+                showChatInterface();
+
+                // Show welcome back message
+                addSystemMessage(`Welcome back! Your previous conversation has been restored.`);
+
+                return;
+            } else {
+                console.log('📝 No existing session found, creating new session');
+            }
+        } catch (err) {
+            console.error('Failed to check for existing session:', err);
+            // Continue with new session flow on error
+        }
+
+        // New user flow - save user info to server
+        try {
+            await fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}/user-info`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(userInfo)
+            });
+        } catch (err) {
+            console.error('Failed to save user info to server:', err);
+        }
+
+        // Show chat interface
+        showChatInterface();
+
+        // Add welcome message
+        addSystemMessage(`Welcome! How can we help you today?`);
+    };
+
     function addMessage(sender, content) {
         removeTypingIndicator();
-        
+
         // Create wrapper div for label + message
         const wrapperDiv = document.createElement('div');
         wrapperDiv.className = `n8n-msg-wrapper n8n-msg-wrapper-${sender}`;
-        
+
         // Add label
         const labelDiv = document.createElement('div');
         labelDiv.className = `n8n-msg-label n8n-msg-label-${sender}`;
@@ -341,7 +615,7 @@
             labelDiv.innerText = '👤 Support Agent';
         }
         wrapperDiv.appendChild(labelDiv);
-        
+
         // Create message bubble
         const msgDiv = document.createElement('div');
         msgDiv.className = `n8n-msg n8n-msg-${sender}`;
@@ -351,7 +625,7 @@
         } else {
             msgDiv.innerText = content;
         }
-        
+
         wrapperDiv.appendChild(msgDiv);
         chatMessages.appendChild(wrapperDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -468,14 +742,14 @@
             const data = await response.json();
             console.log('🤖 AI Response:', data);
 
-            // Handle response format - could be {output: "..."} or [{output: "..."}] or {text: "..."}
+            // Handle response format - could be {output: "..."} or [{output: "..."}] or {text: "..."} or {result: "..."}
             let output = '';
 
             if (Array.isArray(data)) {
                 const first = data[0];
-                output = first.output || first.text || first.message || first.response || (typeof first === 'string' ? first : '');
+                output = first.output || first.text || first.message || first.response || first.result || (typeof first === 'string' ? first : '');
             } else {
-                output = data.output || data.text || data.message || data.response;
+                output = data.output || data.text || data.message || data.response || data.result;
             }
 
             if (output) {
@@ -558,39 +832,10 @@
         socket = io(CONFIG.API_URL);
         socket.emit('join_session', sessionId);
 
-        // Disable input until session is loaded
-        chatInput.disabled = true;
-        chatSend.disabled = true;
-        chatInput.placeholder = 'Loading session...';
-
-        // Load session status FIRST (before allowing input)
-        fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}`)
-            .then(res => {
-                if (!res.ok) throw new Error('Session not found');
-                return res.json();
-            })
-            .then(session => {
-                if (session && session.status) {
-                    sessionMode = session.status;
-                    localStorage.setItem('n8n_chat_mode', session.status);
-                    setMode(session.status);
-                    console.log('📦 Session loaded from server, mode:', session.status);
-                } else {
-                    setMode('ai'); // Default for new sessions
-                }
-            })
-            .catch(() => {
-                // New session, use AI mode
-                setMode('ai');
-                console.log('🆕 New session, defaulting to AI mode');
-            })
-            .finally(() => {
-                // Enable input after session is loaded
-                isSessionLoaded = true;
-                chatInput.disabled = false;
-                chatSend.disabled = false;
-                chatInput.placeholder = 'Type your message...';
-            });
+        // For demo: Always reset to AI mode on page load
+        sessionMode = 'ai';
+        localStorage.setItem('n8n_chat_mode', 'ai');
+        setMode('ai', true); // Sync to server as well
 
         // Load chat history
         fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}/messages`)
@@ -605,6 +850,8 @@
                         addMessage('ai', m.content);
                     }
                 });
+                // Scroll to bottom after loading all messages
+                setTimeout(() => scrollToBottom(), 100);
             })
             .catch(err => console.error('Failed to load history:', err));
 
@@ -628,7 +875,13 @@
     // ============================================
     // TOGGLE HANDLERS
     // ============================================
-    chatButton.onclick = () => chatWindow.classList.toggle('open');
+    chatButton.onclick = () => {
+        chatWindow.classList.toggle('open');
+        // Scroll to bottom when opening the chat
+        if (chatWindow.classList.contains('open')) {
+            setTimeout(() => scrollToBottom(), 100);
+        }
+    };
     chatClose.onclick = () => chatWindow.classList.remove('open');
 
     // ============================================
