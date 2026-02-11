@@ -24,7 +24,15 @@ import {
     FileText,
     Bot,
     Timer,
-    Tag
+    Tag,
+    Sparkles,
+    ThumbsUp,
+    ThumbsDown,
+    Target,
+    CheckCircle2,
+    AlertCircle,
+    HelpCircle,
+    Loader2
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -45,6 +53,9 @@ function App() {
     const [showSessionSummary, setShowSessionSummary] = useState(false);
     const [allSessionSummaries, setAllSessionSummaries] = useState([]);
     const [loadingSessionSummaries, setLoadingSessionSummaries] = useState(false);
+    const [loadingSummary, setLoadingSummary] = useState(false);
+    const [chatReport, setChatReport] = useState(null);
+    const [loadingReport, setLoadingReport] = useState(false);
     const messagesEndRef = useRef(null);
 
     // Initialize Socket (only once on mount)
@@ -118,8 +129,9 @@ function App() {
         }
     };
 
-    // Fetch Session Summary
+    // Fetch Session Summary (GPT-powered)
     const fetchSessionSummary = async (sessionId) => {
+        setLoadingSummary(true);
         try {
             const res = await fetch(`${SOCKET_URL}/api/sessions/${sessionId}/summary`);
             const data = await res.json();
@@ -127,38 +139,24 @@ function App() {
         } catch (err) {
             console.error('Error fetching session summary:', err);
         }
+        setLoadingSummary(false);
     };
 
-    // Fetch All Session Summaries for Analytics
-    const fetchAllSessionSummaries = async () => {
-        setLoadingSessionSummaries(true);
+    // Fetch Chat Report (GPT-powered batch analysis)
+    const fetchChatReport = async () => {
+        setLoadingReport(true);
         try {
-            // Get all sessions first
-            const sessionsRes = await fetch(`${SOCKET_URL}/api/sessions`);
-            const sessionsData = await sessionsRes.json();
-
-            // Fetch summary for each session (limit to recent 20 for performance)
-            const recentSessions = sessionsData.slice(0, 20);
-            const summaries = await Promise.all(
-                recentSessions.map(async (session) => {
-                    try {
-                        const res = await fetch(`${SOCKET_URL}/api/sessions/${session.session_id}/summary`);
-                        const summary = await res.json();
-                        return {
-                            ...summary,
-                            last_message_at: session.last_message_at,
-                            customer_name: session.customer_name
-                        };
-                    } catch {
-                        return null;
-                    }
-                })
-            );
-            setAllSessionSummaries(summaries.filter(s => s !== null));
+            const res = await fetch(`${SOCKET_URL}/api/reports/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ limit: 20 })
+            });
+            const data = await res.json();
+            setChatReport(data);
         } catch (err) {
-            console.error('Error fetching all session summaries:', err);
+            console.error('Error fetching chat report:', err);
         }
-        setLoadingSessionSummaries(false);
+        setLoadingReport(false);
     };
 
     useEffect(() => {
@@ -173,12 +171,8 @@ function App() {
         return () => clearInterval(interval);
     }, []);
 
-    // Fetch session summaries when switching to analytics view
-    useEffect(() => {
-        if (currentView === 'analytics') {
-            fetchAllSessionSummaries();
-        }
-    }, [currentView]);
+    // No longer auto-fetch session summaries on analytics view
+    // User clicks 'Generate AI Report' button instead
 
     // Fetch Messages when session changes
     useEffect(() => {
@@ -579,106 +573,113 @@ function App() {
                                         </div>
                                     </div>
 
-                                    {/* User/Session-wise Summaries Section */}
-                                    <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
-                                        <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
-                                            <Users size={16} className="text-emerald-400" />
-                                            User Session Chat Summaries
-                                        </h3>
-                                        {loadingSessionSummaries ? (
-                                            <div className="flex items-center justify-center py-8">
-                                                <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
-                                            </div>
-                                        ) : allSessionSummaries.length > 0 ? (
+                                    {/* AI-Powered Chat Report Section */}
+                                    <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5 mt-6">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                                <Sparkles size={16} className="text-cyan-400" />
+                                                AI Chat Report
+                                            </h3>
+                                            <button
+                                                onClick={fetchChatReport}
+                                                disabled={loadingReport}
+                                                className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-xs font-medium flex items-center gap-2 hover:from-cyan-500 hover:to-blue-500 transition-all shadow-lg shadow-cyan-600/20 disabled:opacity-50"
+                                            >
+                                                {loadingReport ? (
+                                                    <><Loader2 size={14} className="animate-spin" /> Analyzing...</>
+                                                ) : (
+                                                    <><Sparkles size={14} /> Generate AI Report</>
+                                                )}
+                                            </button>
+                                        </div>
+
+                                        {chatReport ? (
                                             <div className="space-y-4">
-                                                {allSessionSummaries.map((summary, idx) => (
-                                                    <div key={idx} className="bg-slate-900/50 rounded-xl p-4 border border-white/5 hover:border-emerald-500/30 transition-all">
-                                                        {/* Header */}
-                                                        <div className="flex items-start justify-between mb-3">
-                                                            <div className="flex items-center gap-3">
-                                                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-600 flex items-center justify-center text-white text-sm font-bold">
-                                                                    {(summary.customer_name || 'A').charAt(0).toUpperCase()}
-                                                                </div>
-                                                                <div>
-                                                                    <h4 className="text-sm font-semibold text-white">{summary.customer_name || 'Anonymous User'}</h4>
-                                                                    <p className="text-[10px] font-mono text-slate-500">{summary.sessionId}</p>
-                                                                </div>
-                                                            </div>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-[10px] px-2 py-1 bg-slate-700/50 text-slate-300 rounded-full">
-                                                                    {summary.stats?.totalMessages || 0} msgs
-                                                                </span>
-                                                                <span className={`text-[10px] px-2 py-1 rounded-full ${summary.status === 'ai'
-                                                                    ? 'bg-green-500/20 text-green-400'
-                                                                    : 'bg-orange-500/20 text-orange-400'
-                                                                    }`}>
-                                                                    {summary.status === 'ai' ? '🤖 AI' : '👤 Human'}
-                                                                </span>
-                                                            </div>
+                                                {/* Report Summary */}
+                                                <div className="bg-gradient-to-br from-cyan-600/10 to-blue-600/10 border border-cyan-500/20 rounded-xl p-4">
+                                                    <p className="text-xs text-slate-200 leading-relaxed">{chatReport.reportSummary}</p>
+                                                    <p className="text-[10px] text-slate-500 mt-2">
+                                                        Based on {chatReport.sessionsAnalyzed} sessions • {chatReport.tokensUsed} tokens
+                                                    </p>
+                                                </div>
+
+                                                {/* Sentiment Breakdown */}
+                                                {chatReport.sentimentBreakdown && (
+                                                    <div className="grid grid-cols-3 gap-3">
+                                                        <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-3 text-center">
+                                                            <ThumbsUp size={18} className="text-green-400 mx-auto mb-1" />
+                                                            <p className="text-lg font-bold text-green-400">{chatReport.sentimentBreakdown.positive || 0}</p>
+                                                            <p className="text-[10px] text-slate-400">Positive</p>
                                                         </div>
-
-                                                        {/* Chat History Summary */}
-                                                        <div className="mb-3">
-                                                            <p className="text-[10px] text-slate-500 mb-2 flex items-center gap-1">
-                                                                <MessageSquare size={10} />
-                                                                Chat History ({summary.chatHistory?.length || 0} messages)
-                                                            </p>
-                                                            <div className="bg-slate-800/50 rounded-lg p-3 max-h-64 overflow-y-auto space-y-2">
-                                                                {summary.chatHistory?.length > 0 ? (
-                                                                    summary.chatHistory.map((msg, midx) => (
-                                                                        <div key={midx} className={`flex gap-2 items-start p-2 rounded-lg ${msg.sender === 'user' ? 'bg-blue-500/10' :
-                                                                            msg.sender === 'ai' ? 'bg-green-500/10' : 'bg-orange-500/10'
-                                                                            }`}>
-                                                                            <div className="flex flex-col min-w-[70px]">
-                                                                                <span className={`text-[10px] font-semibold ${msg.sender === 'user' ? 'text-blue-400' :
-                                                                                    msg.sender === 'ai' ? 'text-green-400' : 'text-orange-400'
-                                                                                    }`}>
-                                                                                    {msg.sender === 'user' ? '👤 User' :
-                                                                                        msg.sender === 'ai' ? '🤖 AI' : '👨‍💼 Admin'}
-                                                                                </span>
-                                                                                <span className="text-[9px] text-slate-600">
-                                                                                    {format(new Date(msg.timestamp), 'HH:mm')}
-                                                                                </span>
-                                                                            </div>
-                                                                            <p className="text-xs text-slate-300 flex-1">{msg.content}</p>
-                                                                        </div>
-                                                                    ))
-                                                                ) : (
-                                                                    <p className="text-xs text-slate-500 italic">No messages</p>
-                                                                )}
-                                                            </div>
+                                                        <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
+                                                            <AlertCircle size={18} className="text-slate-400 mx-auto mb-1" />
+                                                            <p className="text-lg font-bold text-slate-300">{chatReport.sentimentBreakdown.neutral || 0}</p>
+                                                            <p className="text-[10px] text-slate-400">Neutral</p>
                                                         </div>
-
-                                                        {/* Keywords */}
-                                                        {summary.topKeywords?.length > 0 && (
-                                                            <div className="mb-3">
-                                                                <p className="text-[10px] text-slate-500 mb-1">Topics discussed:</p>
-                                                                <div className="flex flex-wrap gap-1">
-                                                                    {summary.topKeywords.slice(0, 8).map((kw, kidx) => (
-                                                                        <span key={kidx} className="text-[10px] px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded-full">
-                                                                            {kw.word}
-                                                                        </span>
-                                                                    ))}
-                                                                </div>
-                                                            </div>
-                                                        )}
-
-                                                        {/* Footer Stats */}
-                                                        <div className="flex items-center justify-between text-[10px] text-slate-500 pt-2 border-t border-white/5">
-                                                            <div className="flex items-center gap-3">
-                                                                <span className="text-blue-400">👤 {summary.stats?.userMessages || 0}</span>
-                                                                <span className="text-green-400">🤖 {summary.stats?.aiMessages || 0}</span>
-                                                                <span className="text-orange-400">👨‍💼 {summary.stats?.adminMessages || 0}</span>
-                                                            </div>
-                                                            <span>
-                                                                {summary.last_message_at ? format(new Date(summary.last_message_at), 'MMM dd, HH:mm') : 'N/A'}
-                                                            </span>
+                                                        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-center">
+                                                            <ThumbsDown size={18} className="text-red-400 mx-auto mb-1" />
+                                                            <p className="text-lg font-bold text-red-400">{chatReport.sentimentBreakdown.negative || 0}</p>
+                                                            <p className="text-[10px] text-slate-400">Negative</p>
                                                         </div>
                                                     </div>
-                                                ))}
+                                                )}
+
+                                                {/* Common Topics */}
+                                                {chatReport.commonTopics?.length > 0 && (
+                                                    <div>
+                                                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                                            <Hash size={12} /> Common Topics
+                                                        </h4>
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {chatReport.commonTopics.map((topic, idx) => (
+                                                                <span key={idx} className="px-2 py-1 bg-purple-600/10 text-purple-300 rounded-lg text-[11px] border border-purple-500/20">
+                                                                    {topic}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Key Insights */}
+                                                {chatReport.keyInsights?.length > 0 && (
+                                                    <div>
+                                                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                                            <Target size={12} /> Key Insights
+                                                        </h4>
+                                                        <div className="space-y-2">
+                                                            {chatReport.keyInsights.map((insight, idx) => (
+                                                                <div key={idx} className="bg-slate-900/50 rounded-lg p-3 border border-white/5 flex items-start gap-2">
+                                                                    <span className="text-amber-400 mt-0.5">💡</span>
+                                                                    <p className="text-xs text-slate-300">{insight}</p>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Recommendations */}
+                                                {chatReport.recommendations?.length > 0 && (
+                                                    <div>
+                                                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                                            <CheckCircle2 size={12} /> Recommendations
+                                                        </h4>
+                                                        <div className="space-y-2">
+                                                            {chatReport.recommendations.map((rec, idx) => (
+                                                                <div key={idx} className="bg-cyan-600/5 rounded-lg p-3 border border-cyan-500/10 flex items-start gap-2">
+                                                                    <span className="text-cyan-400 mt-0.5">✅</span>
+                                                                    <p className="text-xs text-slate-300">{rec}</p>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
                                         ) : (
-                                            <p className="text-sm text-slate-500 text-center py-8">No session summaries available</p>
+                                            <div className="text-center py-8">
+                                                <Sparkles size={32} className="text-slate-600 mx-auto mb-3" />
+                                                <p className="text-sm text-slate-500">Click "Generate AI Report" to analyze recent conversations</p>
+                                                <p className="text-xs text-slate-600 mt-1">Uses GPT to summarize trends, sentiment & provide recommendations</p>
+                                            </div>
                                         )}
                                     </div>
                                 </>
@@ -800,150 +801,196 @@ function App() {
                                             </button>
                                         </div>
 
-                                        {/* Stats Cards */}
-                                        <div className="grid grid-cols-2 gap-3 mb-5">
-                                            <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
-                                                <div className="w-8 h-8 rounded-lg bg-blue-600/20 flex items-center justify-center mx-auto mb-2">
-                                                    <User size={14} className="text-blue-400" />
-                                                </div>
-                                                <p className="text-lg font-bold text-white">{sessionSummary.stats?.userMessages || 0}</p>
-                                                <p className="text-[10px] text-slate-400">User Msgs</p>
+                                        {loadingSummary ? (
+                                            <div className="flex flex-col items-center justify-center py-12">
+                                                <div className="w-10 h-10 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                                                <p className="text-xs text-slate-400 animate-pulse">AI is analyzing conversation...</p>
                                             </div>
-                                            <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
-                                                <div className="w-8 h-8 rounded-lg bg-green-600/20 flex items-center justify-center mx-auto mb-2">
-                                                    <Bot size={14} className="text-green-400" />
-                                                </div>
-                                                <p className="text-lg font-bold text-white">{sessionSummary.stats?.aiMessages || 0}</p>
-                                                <p className="text-[10px] text-slate-400">AI Replies</p>
-                                            </div>
-                                            <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
-                                                <div className="w-8 h-8 rounded-lg bg-purple-600/20 flex items-center justify-center mx-auto mb-2">
-                                                    <ShieldCheck size={14} className="text-purple-400" />
-                                                </div>
-                                                <p className="text-lg font-bold text-white">{sessionSummary.stats?.adminMessages || 0}</p>
-                                                <p className="text-[10px] text-slate-400">Admin Msgs</p>
-                                            </div>
-                                            <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
-                                                <div className="w-8 h-8 rounded-lg bg-orange-600/20 flex items-center justify-center mx-auto mb-2">
-                                                    <Timer size={14} className="text-orange-400" />
-                                                </div>
-                                                <p className="text-lg font-bold text-white">
-                                                    {sessionSummary.stats?.sessionDurationSeconds
-                                                        ? sessionSummary.stats.sessionDurationSeconds < 60
-                                                            ? `${sessionSummary.stats.sessionDurationSeconds}s`
-                                                            : `${Math.round(sessionSummary.stats.sessionDurationSeconds / 60)}m`
-                                                        : '0s'}
-                                                </p>
-                                                <p className="text-[10px] text-slate-400">Duration</p>
-                                            </div>
-                                        </div>
+                                        ) : (
+                                            <>
+                                                {/* GPT Summary */}
+                                                {sessionSummary.summary && (
+                                                    <div className="bg-gradient-to-br from-cyan-600/10 to-blue-600/10 border border-cyan-500/20 rounded-xl p-4 mb-4">
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            <Sparkles size={14} className="text-cyan-400" />
+                                                            <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider">AI Summary</span>
+                                                        </div>
+                                                        <p className="text-xs text-slate-200 leading-relaxed">{sessionSummary.summary}</p>
+                                                    </div>
+                                                )}
 
-                                        {/* Session Status */}
-                                        <div className="bg-slate-800/30 border border-white/5 rounded-xl p-3 mb-4">
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-xs text-slate-400">Mode</span>
-                                                <span className={`text-xs font-bold uppercase px-2 py-1 rounded-lg ${sessionSummary.status === 'ai'
-                                                    ? 'bg-green-600/20 text-green-400'
-                                                    : 'bg-orange-600/20 text-orange-400'
-                                                    }`}>
-                                                    {sessionSummary.status === 'ai' ? '🤖 AI Mode' : '👤 Human Mode'}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        {/* Top Keywords */}
-                                        {sessionSummary.topKeywords?.length > 0 && (
-                                            <div className="mb-4">
-                                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                                                    <Tag size={12} />
-                                                    Top Keywords
-                                                </h4>
-                                                <div className="flex flex-wrap gap-2">
-                                                    {sessionSummary.topKeywords.slice(0, 8).map((kw, idx) => (
-                                                        <span
-                                                            key={idx}
-                                                            className="px-2 py-1 bg-cyan-600/10 text-cyan-300 rounded-lg text-[11px] border border-cyan-500/20"
-                                                        >
-                                                            {kw.word}
-                                                            <span className="text-cyan-500 ml-1">({kw.count})</span>
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Chat History */}
-                                        {sessionSummary.chatHistory?.length > 0 && (
-                                            <div>
-                                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                                                    <MessageCircle size={12} />
-                                                    Chat History ({sessionSummary.chatHistory.length})
-                                                </h4>
-                                                <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar pr-1">
-                                                    {sessionSummary.chatHistory.map((msg, idx) => (
-                                                        <div
-                                                            key={idx}
-                                                            className={`rounded-xl p-3 border transition-all ${msg.sender === 'user'
-                                                                ? 'bg-blue-500/10 border-blue-500/20'
-                                                                : msg.sender === 'ai'
-                                                                    ? 'bg-green-500/10 border-green-500/20'
-                                                                    : 'bg-orange-500/10 border-orange-500/20'
-                                                                }`}
-                                                        >
-                                                            <div className="flex items-center gap-2 mb-1">
-                                                                <span className={`text-[10px] font-bold uppercase ${msg.sender === 'user'
-                                                                    ? 'text-blue-400'
-                                                                    : msg.sender === 'ai'
-                                                                        ? 'text-green-400'
-                                                                        : 'text-orange-400'
-                                                                    }`}>
-                                                                    {msg.sender === 'user' ? '👤 User' : msg.sender === 'ai' ? '🤖 AI Bot' : '👨‍💼 Admin'}
-                                                                </span>
+                                                {/* Sentiment & Resolution Row */}
+                                                <div className="grid grid-cols-2 gap-3 mb-4">
+                                                    {sessionSummary.sentiment && (
+                                                        <div className={`rounded-xl p-3 border text-center ${sessionSummary.sentiment === 'positive' ? 'bg-green-500/10 border-green-500/20' :
+                                                                sessionSummary.sentiment === 'negative' ? 'bg-red-500/10 border-red-500/20' :
+                                                                    'bg-slate-800/50 border-white/5'
+                                                            }`}>
+                                                            <div className="flex items-center justify-center gap-1 mb-1">
+                                                                {sessionSummary.sentiment === 'positive' ? <ThumbsUp size={14} className="text-green-400" /> :
+                                                                    sessionSummary.sentiment === 'negative' ? <ThumbsDown size={14} className="text-red-400" /> :
+                                                                        <AlertCircle size={14} className="text-slate-400" />}
                                                             </div>
-                                                            <p className="text-xs text-slate-200">{msg.content}</p>
-                                                            <p className="text-[9px] text-slate-500 mt-2 flex items-center gap-1">
-                                                                <Clock size={10} />
-                                                                {format(new Date(msg.timestamp), 'MMM dd, HH:mm')}
-                                                            </p>
+                                                            <p className="text-[10px] text-slate-400">Sentiment</p>
+                                                            <p className={`text-xs font-bold capitalize ${sessionSummary.sentiment === 'positive' ? 'text-green-400' :
+                                                                    sessionSummary.sentiment === 'negative' ? 'text-red-400' :
+                                                                        'text-slate-300'
+                                                                }`}>{sessionSummary.sentiment}</p>
                                                         </div>
-                                                    ))}
+                                                    )}
+                                                    {sessionSummary.resolved !== undefined && (
+                                                        <div className={`rounded-xl p-3 border text-center ${sessionSummary.resolved === true ? 'bg-green-500/10 border-green-500/20' :
+                                                                sessionSummary.resolved === false ? 'bg-red-500/10 border-red-500/20' :
+                                                                    'bg-slate-800/50 border-white/5'
+                                                            }`}>
+                                                            <div className="flex items-center justify-center gap-1 mb-1">
+                                                                {sessionSummary.resolved === true ? <CheckCircle2 size={14} className="text-green-400" /> :
+                                                                    sessionSummary.resolved === false ? <AlertCircle size={14} className="text-red-400" /> :
+                                                                        <HelpCircle size={14} className="text-slate-400" />}
+                                                            </div>
+                                                            <p className="text-[10px] text-slate-400">Resolved</p>
+                                                            <p className={`text-xs font-bold ${sessionSummary.resolved === true ? 'text-green-400' :
+                                                                    sessionSummary.resolved === false ? 'text-red-400' :
+                                                                        'text-slate-300'
+                                                                }`}>{sessionSummary.resolved === true ? 'Yes' : sessionSummary.resolved === false ? 'No' : 'Unclear'}</p>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            </div>
-                                        )}
 
-                                        {/* Metadata Info */}
-                                        {sessionSummary.metadata && (
-                                            <div className="mt-4 pt-4 border-t border-white/5">
-                                                <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
-                                                    Session Info
-                                                </h4>
-                                                <div className="space-y-2 text-[11px]">
-                                                    {sessionSummary.metadata.site_name && (
-                                                        <div className="flex justify-between">
-                                                            <span className="text-slate-500">Site</span>
-                                                            <span className="text-slate-300">{sessionSummary.metadata.site_name}</span>
+                                                {/* Stats Cards */}
+                                                <div className="grid grid-cols-2 gap-3 mb-4">
+                                                    <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
+                                                        <div className="w-8 h-8 rounded-lg bg-blue-600/20 flex items-center justify-center mx-auto mb-2">
+                                                            <User size={14} className="text-blue-400" />
                                                         </div>
-                                                    )}
-                                                    {sessionSummary.metadata.host && (
-                                                        <div className="flex justify-between">
-                                                            <span className="text-slate-500">Origin</span>
-                                                            <span className="text-slate-300 truncate ml-2 max-w-[150px]">{sessionSummary.metadata.host}</span>
+                                                        <p className="text-lg font-bold text-white">{sessionSummary.stats?.userMessages || 0}</p>
+                                                        <p className="text-[10px] text-slate-400">User Msgs</p>
+                                                    </div>
+                                                    <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
+                                                        <div className="w-8 h-8 rounded-lg bg-green-600/20 flex items-center justify-center mx-auto mb-2">
+                                                            <Bot size={14} className="text-green-400" />
                                                         </div>
-                                                    )}
-                                                    {sessionSummary.metadata.timezone && (
-                                                        <div className="flex justify-between">
-                                                            <span className="text-slate-500">Timezone</span>
-                                                            <span className="text-slate-300">{sessionSummary.metadata.timezone}</span>
+                                                        <p className="text-lg font-bold text-white">{sessionSummary.stats?.aiMessages || 0}</p>
+                                                        <p className="text-[10px] text-slate-400">AI Replies</p>
+                                                    </div>
+                                                    <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
+                                                        <div className="w-8 h-8 rounded-lg bg-purple-600/20 flex items-center justify-center mx-auto mb-2">
+                                                            <ShieldCheck size={14} className="text-purple-400" />
                                                         </div>
-                                                    )}
-                                                    {sessionSummary.createdAt && (
-                                                        <div className="flex justify-between">
-                                                            <span className="text-slate-500">Started</span>
-                                                            <span className="text-slate-300">{format(new Date(sessionSummary.createdAt), 'MMM dd, HH:mm')}</span>
+                                                        <p className="text-lg font-bold text-white">{sessionSummary.stats?.adminMessages || 0}</p>
+                                                        <p className="text-[10px] text-slate-400">Admin Msgs</p>
+                                                    </div>
+                                                    <div className="bg-slate-800/50 border border-white/5 rounded-xl p-3 text-center">
+                                                        <div className="w-8 h-8 rounded-lg bg-orange-600/20 flex items-center justify-center mx-auto mb-2">
+                                                            <Timer size={14} className="text-orange-400" />
                                                         </div>
-                                                    )}
+                                                        <p className="text-lg font-bold text-white">
+                                                            {sessionSummary.stats?.sessionDurationSeconds
+                                                                ? sessionSummary.stats.sessionDurationSeconds < 60
+                                                                    ? `${sessionSummary.stats.sessionDurationSeconds}s`
+                                                                    : `${Math.round(sessionSummary.stats.sessionDurationSeconds / 60)}m`
+                                                                : '0s'}
+                                                        </p>
+                                                        <p className="text-[10px] text-slate-400">Duration</p>
+                                                    </div>
                                                 </div>
-                                            </div>
+
+                                                {/* Intent */}
+                                                {sessionSummary.intent && (
+                                                    <div className="bg-slate-800/30 border border-white/5 rounded-xl p-3 mb-4">
+                                                        <div className="flex items-center gap-2 mb-1">
+                                                            <Target size={12} className="text-amber-400" />
+                                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">User Intent</span>
+                                                        </div>
+                                                        <p className="text-xs text-slate-200">{sessionSummary.intent}</p>
+                                                    </div>
+                                                )}
+
+                                                {/* Session Status */}
+                                                <div className="bg-slate-800/30 border border-white/5 rounded-xl p-3 mb-4">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-xs text-slate-400">Mode</span>
+                                                        <span className={`text-xs font-bold uppercase px-2 py-1 rounded-lg ${sessionSummary.status === 'ai'
+                                                                ? 'bg-green-600/20 text-green-400'
+                                                                : 'bg-orange-600/20 text-orange-400'
+                                                            }`}>
+                                                            {sessionSummary.status === 'ai' ? '🤖 AI Mode' : '👤 Human Mode'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                {/* Topics */}
+                                                {sessionSummary.topics?.length > 0 && (
+                                                    <div className="mb-4">
+                                                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                                            <Tag size={12} />
+                                                            Topics
+                                                        </h4>
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {sessionSummary.topics.map((topic, idx) => (
+                                                                <span
+                                                                    key={idx}
+                                                                    className="px-2 py-1 bg-cyan-600/10 text-cyan-300 rounded-lg text-[11px] border border-cyan-500/20"
+                                                                >
+                                                                    {topic}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Highlights */}
+                                                {sessionSummary.highlights?.length > 0 && (
+                                                    <div className="mb-4">
+                                                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                                            <Sparkles size={12} />
+                                                            Key Moments
+                                                        </h4>
+                                                        <div className="space-y-2">
+                                                            {sessionSummary.highlights.map((highlight, idx) => (
+                                                                <div key={idx} className="bg-slate-800/50 border border-white/5 rounded-lg p-3">
+                                                                    <p className="text-xs text-slate-300 italic">"{highlight}"</p>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Metadata Info */}
+                                                {sessionSummary.metadata && (
+                                                    <div className="mt-4 pt-4 border-t border-white/5">
+                                                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">
+                                                            Session Info
+                                                        </h4>
+                                                        <div className="space-y-2 text-[11px]">
+                                                            {sessionSummary.metadata.site_name && (
+                                                                <div className="flex justify-between">
+                                                                    <span className="text-slate-500">Site</span>
+                                                                    <span className="text-slate-300">{sessionSummary.metadata.site_name}</span>
+                                                                </div>
+                                                            )}
+                                                            {sessionSummary.metadata.host && (
+                                                                <div className="flex justify-between">
+                                                                    <span className="text-slate-500">Origin</span>
+                                                                    <span className="text-slate-300 truncate ml-2 max-w-[150px]">{sessionSummary.metadata.host}</span>
+                                                                </div>
+                                                            )}
+                                                            {sessionSummary.createdAt && (
+                                                                <div className="flex justify-between">
+                                                                    <span className="text-slate-500">Started</span>
+                                                                    <span className="text-slate-300">{format(new Date(sessionSummary.createdAt), 'MMM dd, HH:mm')}</span>
+                                                                </div>
+                                                            )}
+                                                            {sessionSummary.tokensUsed > 0 && (
+                                                                <div className="flex justify-between">
+                                                                    <span className="text-slate-500">AI Tokens</span>
+                                                                    <span className="text-cyan-400 font-mono">{sessionSummary.tokensUsed}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </>
                                         )}
                                     </div>
                                 </div>

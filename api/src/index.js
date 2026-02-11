@@ -4,8 +4,14 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import pg from 'pg';
+import OpenAI from 'openai';
 import logger from './config/logger.js';
 import { MessageSchema } from './schemas/chat.js';
+
+// OpenAI setup
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+});
 
 const { Pool } = pg;
 
@@ -498,7 +504,7 @@ app.get('/api/analytics', async (req, res, next) => {
     }
 });
 
-// Get message summary for a specific session
+// GPT-powered session summary
 app.get('/api/sessions/:sessionId/summary', async (req, res, next) => {
     const { sessionId } = req.params;
     try {
@@ -518,6 +524,18 @@ app.get('/api/sessions/:sessionId/summary', async (req, res, next) => {
             return res.status(404).json({ error: 'Session not found' });
         }
 
+        if (messages.rows.length === 0) {
+            return res.json({
+                sessionId,
+                summary: 'No messages in this session yet.',
+                sentiment: 'neutral',
+                topics: [],
+                intent: 'unknown',
+                resolved: 'unclear',
+                stats: { totalMessages: 0, userMessages: 0, aiMessages: 0, adminMessages: 0, sessionDurationSeconds: 0 }
+            });
+        }
+
         const userMessages = messages.rows.filter(m => m.sender === 'user');
         const aiMessages = messages.rows.filter(m => m.sender === 'ai');
         const adminMessages = messages.rows.filter(m => m.sender === 'admin');
@@ -527,33 +545,70 @@ app.get('/api/sessions/:sessionId/summary', async (req, res, next) => {
         if (messages.rows.length > 1) {
             const firstMsg = new Date(messages.rows[0].created_at);
             const lastMsg = new Date(messages.rows[messages.rows.length - 1].created_at);
-            sessionDuration = Math.round((lastMsg - firstMsg) / 1000); // in seconds
+            sessionDuration = Math.round((lastMsg - firstMsg) / 1000);
         }
 
-        // Extract keywords from user messages (simple word frequency)
-        const wordCounts = {};
-        const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare', 'ought', 'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'between', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'just', 'and', 'but', 'if', 'or', 'because', 'until', 'while', 'this', 'that', 'these', 'those', 'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'you', 'your', 'yours', 'he', 'him', 'his', 'she', 'her', 'hers', 'it', 'its', 'they', 'them', 'their', 'what', 'which', 'who', 'whom']);
+        // Build conversation text for GPT
+        const conversationText = messages.rows
+            .map(m => `${m.sender.toUpperCase()}: ${m.content}`)
+            .join('\n');
 
-        userMessages.forEach(msg => {
-            const words = msg.content.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/);
-            words.forEach(word => {
-                if (word.length > 2 && !stopWords.has(word)) {
-                    wordCounts[word] = (wordCounts[word] || 0) + 1;
+        // Call GPT for intelligent summary
+        const gptResponse = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            temperature: 0.3,
+            response_format: { type: 'json_object' },
+            messages: [
+                {
+                    role: 'system',
+                    content: `You are a chat analyst. Analyze the following customer support conversation and return a JSON object with these exact fields:
+- "summary": a concise 2-3 sentence summary of the conversation
+- "sentiment": the user's overall sentiment (one of: "positive", "neutral", "negative")
+- "topics": an array of key topics discussed (max 5 short phrases)
+- "intent": what the user was trying to achieve in one sentence
+- "resolved": whether the user's issue was resolved (one of: true, false, "unclear")
+- "highlights": array of max 3 notable quotes or key moments from the conversation
+
+Return ONLY valid JSON, no other text.`
+                },
+                {
+                    role: 'user',
+                    content: conversationText
                 }
-            });
+            ]
         });
 
-        const topKeywords = Object.entries(wordCounts)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 10)
-            .map(([word, count]) => ({ word, count }));
+        let gptAnalysis;
+        try {
+            gptAnalysis = JSON.parse(gptResponse.choices[0].message.content);
+        } catch (parseErr) {
+            logger.error('Failed to parse GPT response:', gptResponse.choices[0].message.content);
+            gptAnalysis = {
+                summary: gptResponse.choices[0].message.content,
+                sentiment: 'neutral',
+                topics: [],
+                intent: 'unknown',
+                resolved: 'unclear',
+                highlights: []
+            };
+        }
+
+        // Also save the summary to the session for caching
+        await pool.query(
+            'UPDATE sessions SET summary = $1, updated_at = NOW() WHERE session_id = $2',
+            [gptAnalysis.summary, sessionId]
+        );
+
+        logger.info(`GPT summary generated for session ${sessionId}`);
 
         res.json({
             sessionId,
             status: session.rows[0].status,
+            customerName: session.rows[0].customer_name,
             metadata: session.rows[0].metadata,
             createdAt: session.rows[0].created_at,
             updatedAt: session.rows[0].updated_at,
+            ...gptAnalysis,
             stats: {
                 totalMessages: messages.rows.length,
                 userMessages: userMessages.length,
@@ -561,18 +616,144 @@ app.get('/api/sessions/:sessionId/summary', async (req, res, next) => {
                 adminMessages: adminMessages.length,
                 sessionDurationSeconds: sessionDuration
             },
-            topKeywords,
-            userMessagesList: userMessages.map(m => ({
-                content: m.content,
-                timestamp: m.created_at
-            })),
-            chatHistory: messages.rows.map(m => ({
-                sender: m.sender,
-                content: m.content,
-                timestamp: m.created_at
-            }))
+            tokensUsed: gptResponse.usage?.total_tokens || 0
         });
     } catch (error) {
+        logger.error('Error generating GPT summary:', error);
+        next(error);
+    }
+});
+
+// GPT-powered chat report across multiple sessions
+app.post('/api/reports/chat', async (req, res, next) => {
+    try {
+        const { startDate, endDate, status, limit = 20 } = req.body;
+
+        // Build dynamic query based on filters
+        let whereConditions = [];
+        let queryParams = [];
+        let paramIndex = 1;
+
+        if (startDate) {
+            whereConditions.push(`s.created_at >= $${paramIndex}`);
+            queryParams.push(startDate);
+            paramIndex++;
+        }
+        if (endDate) {
+            whereConditions.push(`s.created_at <= $${paramIndex}`);
+            queryParams.push(endDate);
+            paramIndex++;
+        }
+        if (status) {
+            whereConditions.push(`s.status = $${paramIndex}`);
+            queryParams.push(status);
+            paramIndex++;
+        }
+
+        const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+
+        // Get sessions with their messages
+        const sessionsResult = await pool.query(
+            `SELECT s.session_id, s.customer_name, s.status, s.created_at
+             FROM sessions s
+             ${whereClause}
+             ORDER BY s.created_at DESC
+             LIMIT $${paramIndex}`,
+            [...queryParams, Math.min(limit, 50)]
+        );
+
+        if (sessionsResult.rows.length === 0) {
+            return res.json({
+                reportSummary: 'No sessions found matching the specified filters.',
+                commonTopics: [],
+                sentimentBreakdown: { positive: 0, neutral: 0, negative: 0 },
+                recommendations: [],
+                sessionCount: 0
+            });
+        }
+
+        // Fetch messages for each session
+        const sessionSummaries = [];
+        for (const session of sessionsResult.rows) {
+            const messagesResult = await pool.query(
+                'SELECT sender, content FROM messages WHERE session_id = $1 ORDER BY created_at ASC LIMIT 30',
+                [session.session_id]
+            );
+
+            if (messagesResult.rows.length > 0) {
+                const convo = messagesResult.rows
+                    .map(m => `${m.sender.toUpperCase()}: ${m.content}`)
+                    .join('\n');
+                sessionSummaries.push(`--- Session: ${session.customer_name || session.session_id} (${session.status}) ---\n${convo}`);
+            }
+        }
+
+        if (sessionSummaries.length === 0) {
+            return res.json({
+                reportSummary: 'Sessions found but no messages to analyze.',
+                commonTopics: [],
+                sentimentBreakdown: { positive: 0, neutral: 0, negative: 0 },
+                recommendations: [],
+                sessionCount: sessionsResult.rows.length
+            });
+        }
+
+        // Truncate to ~12000 chars to stay within token limits
+        let combinedText = sessionSummaries.join('\n\n');
+        if (combinedText.length > 12000) {
+            combinedText = combinedText.substring(0, 12000) + '\n... (truncated)';
+        }
+
+        // Call GPT for overall report
+        const gptResponse = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            temperature: 0.3,
+            response_format: { type: 'json_object' },
+            messages: [
+                {
+                    role: 'system',
+                    content: `You are a customer support analyst. Analyze these ${sessionSummaries.length} chat conversations and return a JSON report with these exact fields:
+- "reportSummary": a concise 3-5 sentence overall summary of all conversations
+- "commonTopics": array of the top 5-10 most common topics/issues customers are asking about (each as a short string)
+- "sentimentBreakdown": object with keys "positive", "neutral", "negative" containing estimated counts based on the conversations
+- "recommendations": array of 3-5 actionable suggestions to improve customer support based on the patterns you see
+- "keyInsights": array of 3-5 important observations about customer behavior or common pain points
+
+Return ONLY valid JSON, no other text.`
+                },
+                {
+                    role: 'user',
+                    content: combinedText
+                }
+            ]
+        });
+
+        let report;
+        try {
+            report = JSON.parse(gptResponse.choices[0].message.content);
+        } catch (parseErr) {
+            logger.error('Failed to parse GPT report response:', gptResponse.choices[0].message.content);
+            report = {
+                reportSummary: gptResponse.choices[0].message.content,
+                commonTopics: [],
+                sentimentBreakdown: { positive: 0, neutral: 0, negative: 0 },
+                recommendations: [],
+                keyInsights: []
+            };
+        }
+
+        logger.info(`GPT report generated for ${sessionSummaries.length} sessions`);
+
+        res.json({
+            ...report,
+            sessionCount: sessionsResult.rows.length,
+            sessionsAnalyzed: sessionSummaries.length,
+            filters: { startDate, endDate, status, limit },
+            generatedAt: new Date().toISOString(),
+            tokensUsed: gptResponse.usage?.total_tokens || 0
+        });
+    } catch (error) {
+        logger.error('Error generating chat report:', error);
         next(error);
     }
 });
