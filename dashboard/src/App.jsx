@@ -32,7 +32,9 @@ import {
     CheckCircle2,
     AlertCircle,
     HelpCircle,
-    Loader2
+    Loader2,
+    ToggleLeft,
+    ToggleRight
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -723,6 +725,35 @@ function App() {
                                 </div>
                             </div>
                             <div className="flex items-center gap-3">
+                                {/* Admin Mode Toggle */}
+                                <button
+                                    onClick={async () => {
+                                        const newStatus = activeSession.status === 'ai' ? 'human' : 'ai';
+                                        try {
+                                            await fetch(`${SOCKET_URL}/api/sessions/${activeSession.session_id}/status`, {
+                                                method: 'PUT',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ status: newStatus })
+                                            });
+                                            setActiveSession(prev => ({ ...prev, status: newStatus }));
+                                            setSessions(prev => prev.map(s =>
+                                                s.session_id === activeSession.session_id ? { ...s, status: newStatus } : s
+                                            ));
+                                        } catch (err) {
+                                            console.error('Failed to toggle mode:', err);
+                                        }
+                                    }}
+                                    className={`px-4 py-2 rounded-xl border flex items-center gap-2 transition-all ${activeSession.status === 'human'
+                                        ? 'bg-orange-600/20 border-orange-500/30 text-orange-400'
+                                        : 'bg-green-600/20 border-green-500/30 text-green-400'
+                                        }`}
+                                    title={activeSession.status === 'ai' ? 'Switch to Human mode' : 'Switch to AI mode'}
+                                >
+                                    {activeSession.status === 'human' ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+                                    <span className="text-xs font-medium">
+                                        {activeSession.status === 'ai' ? '🤖 AI' : '👤 Human'}
+                                    </span>
+                                </button>
                                 <button
                                     onClick={() => setShowSessionSummary(!showSessionSummary)}
                                     className={`px-4 py-2 rounded-xl border flex items-center gap-2 transition-all ${showSessionSummary
@@ -823,8 +854,8 @@ function App() {
                                                 <div className="grid grid-cols-2 gap-3 mb-4">
                                                     {sessionSummary.sentiment && (
                                                         <div className={`rounded-xl p-3 border text-center ${sessionSummary.sentiment === 'positive' ? 'bg-green-500/10 border-green-500/20' :
-                                                                sessionSummary.sentiment === 'negative' ? 'bg-red-500/10 border-red-500/20' :
-                                                                    'bg-slate-800/50 border-white/5'
+                                                            sessionSummary.sentiment === 'negative' ? 'bg-red-500/10 border-red-500/20' :
+                                                                'bg-slate-800/50 border-white/5'
                                                             }`}>
                                                             <div className="flex items-center justify-center gap-1 mb-1">
                                                                 {sessionSummary.sentiment === 'positive' ? <ThumbsUp size={14} className="text-green-400" /> :
@@ -833,15 +864,15 @@ function App() {
                                                             </div>
                                                             <p className="text-[10px] text-slate-400">Sentiment</p>
                                                             <p className={`text-xs font-bold capitalize ${sessionSummary.sentiment === 'positive' ? 'text-green-400' :
-                                                                    sessionSummary.sentiment === 'negative' ? 'text-red-400' :
-                                                                        'text-slate-300'
+                                                                sessionSummary.sentiment === 'negative' ? 'text-red-400' :
+                                                                    'text-slate-300'
                                                                 }`}>{sessionSummary.sentiment}</p>
                                                         </div>
                                                     )}
                                                     {sessionSummary.resolved !== undefined && (
                                                         <div className={`rounded-xl p-3 border text-center ${sessionSummary.resolved === true ? 'bg-green-500/10 border-green-500/20' :
-                                                                sessionSummary.resolved === false ? 'bg-red-500/10 border-red-500/20' :
-                                                                    'bg-slate-800/50 border-white/5'
+                                                            sessionSummary.resolved === false ? 'bg-red-500/10 border-red-500/20' :
+                                                                'bg-slate-800/50 border-white/5'
                                                             }`}>
                                                             <div className="flex items-center justify-center gap-1 mb-1">
                                                                 {sessionSummary.resolved === true ? <CheckCircle2 size={14} className="text-green-400" /> :
@@ -850,8 +881,8 @@ function App() {
                                                             </div>
                                                             <p className="text-[10px] text-slate-400">Resolved</p>
                                                             <p className={`text-xs font-bold ${sessionSummary.resolved === true ? 'text-green-400' :
-                                                                    sessionSummary.resolved === false ? 'text-red-400' :
-                                                                        'text-slate-300'
+                                                                sessionSummary.resolved === false ? 'text-red-400' :
+                                                                    'text-slate-300'
                                                                 }`}>{sessionSummary.resolved === true ? 'Yes' : sessionSummary.resolved === false ? 'No' : 'Unclear'}</p>
                                                         </div>
                                                     )}
@@ -911,8 +942,8 @@ function App() {
                                                     <div className="flex items-center justify-between">
                                                         <span className="text-xs text-slate-400">Mode</span>
                                                         <span className={`text-xs font-bold uppercase px-2 py-1 rounded-lg ${sessionSummary.status === 'ai'
-                                                                ? 'bg-green-600/20 text-green-400'
-                                                                : 'bg-orange-600/20 text-orange-400'
+                                                            ? 'bg-green-600/20 text-green-400'
+                                                            : 'bg-orange-600/20 text-orange-400'
                                                             }`}>
                                                             {sessionSummary.status === 'ai' ? '🤖 AI Mode' : '👤 Human Mode'}
                                                         </span>

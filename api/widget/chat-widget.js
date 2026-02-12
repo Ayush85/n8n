@@ -832,10 +832,29 @@
         socket = io(CONFIG.API_URL);
         socket.emit('join_session', sessionId);
 
-        // For demo: Always reset to AI mode on page load
-        sessionMode = 'ai';
-        localStorage.setItem('n8n_chat_mode', 'ai');
-        setMode('ai', true); // Sync to server as well
+        // Fetch actual session status from server (admin-managed)
+        // This is the single source of truth — overrides localStorage
+        fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}`)
+            .then(res => {
+                if (!res.ok) throw new Error('Session not found');
+                return res.json();
+            })
+            .then(session => {
+                if (session && session.status) {
+                    sessionMode = session.status;
+                    localStorage.setItem('n8n_chat_mode', session.status);
+                    // Force update the UI (bypass the early return check)
+                    modeBadge.textContent = session.status === 'human' ? 'HUMAN' : 'AI';
+                    modeBadge.className = `n8n-mode-badge n8n-mode-${session.status === 'human' ? 'human' : 'ai'}`;
+                    statusText.textContent = session.status === 'human'
+                        ? 'Connected to human support'
+                        : 'Online • Ready to help';
+                    console.log(`📋 Session mode from server: ${session.status}`);
+                }
+            })
+            .catch(err => {
+                console.warn('Could not fetch session status, using default:', err);
+            });
 
         // Load chat history
         fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}/messages`)
@@ -912,7 +931,16 @@
         }
     });
 
-    // Initialize mode display
-    setMode(sessionMode);
+    // Initialize mode display with localStorage value (will be overridden by server)
+    // This just prevents a blank badge before the server responds
+    if (sessionMode === 'human') {
+        modeBadge.textContent = 'HUMAN';
+        modeBadge.className = 'n8n-mode-badge n8n-mode-human';
+        statusText.textContent = 'Connected to human support';
+    } else {
+        modeBadge.textContent = 'AI';
+        modeBadge.className = 'n8n-mode-badge n8n-mode-ai';
+        statusText.textContent = 'Online • Ready to help';
+    }
 
 })();

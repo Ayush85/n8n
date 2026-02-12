@@ -345,6 +345,13 @@ app.get('/api/sessions/:sessionId', async (req, res, next) => {
 app.put('/api/sessions/:sessionId/status', async (req, res, next) => {
     const { sessionId } = req.params;
     const { status } = req.body;
+
+    // Validate status value
+    const validStatuses = ['ai', 'human'];
+    if (!status || !validStatuses.includes(status)) {
+        return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
+    }
+
     try {
         await pool.query(
             'UPDATE sessions SET status = $1, updated_at = NOW() WHERE session_id = $2',
@@ -507,6 +514,12 @@ app.get('/api/analytics', async (req, res, next) => {
 // GPT-powered session summary
 app.get('/api/sessions/:sessionId/summary', async (req, res, next) => {
     const { sessionId } = req.params;
+
+    // Guard: Check if OpenAI API key is configured
+    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.startsWith('sk-your')) {
+        return res.status(503).json({ error: 'OpenAI API key not configured. Please set OPENAI_API_KEY in your .env file.' });
+    }
+
     try {
         // Get all messages for the session
         const messages = await pool.query(
@@ -626,6 +639,11 @@ Return ONLY valid JSON, no other text.`
 
 // GPT-powered chat report across multiple sessions
 app.post('/api/reports/chat', async (req, res, next) => {
+    // Guard: Check if OpenAI API key is configured
+    if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.startsWith('sk-your')) {
+        return res.status(503).json({ error: 'OpenAI API key not configured. Please set OPENAI_API_KEY in your .env file.' });
+    }
+
     try {
         const { startDate, endDate, status, limit = 20 } = req.body;
 
