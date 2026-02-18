@@ -7,7 +7,6 @@ import pg from 'pg';
 import OpenAI from 'openai';
 import logger from './config/logger.js';
 import { MessageSchema } from './schemas/chat.js';
-import { meta } from 'zod/v4/core';
 
 // OpenAI setup
 const openai = new OpenAI({
