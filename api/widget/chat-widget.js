@@ -3,7 +3,7 @@
     // CONFIGURATION - Customize these values
     // ============================================
     const CONFIG = {
-        API_URL: window.N8N_CHAT_API_URL || 'http://localhost:3001',
+        API_URL: window.N8N_CHAT_API_URL || 'http://159.89.164.224:3001',
         N8N_WEBHOOK_URL: window.N8N_CHAT_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/9a20ec1a-f508-419f-9194-ba933299ddff/chat',
         CLIENT_ID: window.N8N_CHAT_CLIENT_ID || 'client_1',
         SITE_NAME: window.N8N_CHAT_SITE_NAME || 'Fatafat Sewa',
