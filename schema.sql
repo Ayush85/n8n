@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     customer_name TEXT,
     status TEXT DEFAULT 'human', -- 'human' mode only
     summary TEXT,
+    metadata JSONB DEFAULT '{}', -- Client info: IP, site_name, host, href, title, user_agent, etc.
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

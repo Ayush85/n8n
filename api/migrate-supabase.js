@@ -13,24 +13,74 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false } // Required for Supabase
 });
 
-async function applySchema() {
+async function migrate() {
     try {
-        console.log('Reading schema.sql...');
-        const schema = fs.readFileSync('../schema.sql', 'utf8');
+        console.log('Connecting to database...');
+        console.log(`Host: ${process.env.DB_HOST}`);
+        console.log(`Database: ${process.env.DB_NAME}`);
+        console.log(`User: ${process.env.DB_USER}`);
 
-        console.log('Connecting to Supabase...');
-        const client = await pool.connect();
+        // Test connection
+        const testResult = await pool.query('SELECT NOW()');
+        console.log('✅ Database connected at:', testResult.rows[0].now);
 
-        console.log('Applying schema...');
-        await client.query(schema);
+        console.log('\nApplying schema migrations...');
 
-        console.log('Schema applied successfully!');
-        client.release();
+        // Create sessions table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                customer_name TEXT,
+                user_contact TEXT,
+                status TEXT DEFAULT 'human',
+                summary TEXT,
+                metadata JSONB DEFAULT '{}',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('✅ Sessions table created/verified');
+
+        // Add user_contact column if it doesn't exist (for existing tables)
+        await pool.query(`
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                               WHERE table_name='sessions' AND column_name='user_contact') THEN
+                    ALTER TABLE sessions ADD COLUMN user_contact TEXT;
+                END IF;
+            END $$;
+        `);
+        console.log('✅ user_contact column verified');
+
+        // Create messages table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS messages (
+                id SERIAL PRIMARY KEY,
+                session_id TEXT REFERENCES sessions(session_id) ON DELETE CASCADE,
+                sender TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('✅ Messages table created/verified');
+
+        // Create indexes for performance
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+        `);
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+        `);
+        console.log('✅ Indexes created/verified');
+
+        console.log('\n🎉 Migration complete!');
     } catch (err) {
-        console.error('Error applying schema:', err);
+        console.error('❌ Migration error:', err.message);
+        console.error(err);
     } finally {
         await pool.end();
     }
 }
 
-applySchema();
+migrate();
