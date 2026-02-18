@@ -42,6 +42,8 @@ services:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:3001}
     container_name: n8n-dashboard
     restart: unless-stopped
     ports:
