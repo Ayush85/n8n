@@ -3,7 +3,7 @@
     // CONFIGURATION - Customize these values
     // ============================================
     const CONFIG = {
-        API_URL: window.N8N_CHAT_API_URL || 'http://159.89.164.224:3001',
+        API_URL: window.N8N_CHAT_API_URL || 'http://localhost:3001',
         N8N_WEBHOOK_URL: window.N8N_CHAT_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/9a20ec1a-f508-419f-9194-ba933299ddff/chat',
         CLIENT_ID: window.N8N_CHAT_CLIENT_ID || 'client_1',
         SITE_NAME: window.N8N_CHAT_SITE_NAME || 'Fatafat Sewa',
@@ -355,6 +355,102 @@
             opacity: 0.5;
             cursor: not-allowed;
             transform: none;
+        }
+
+        /* ====== RESPONSIVE: Tablet (≤768px) ====== */
+        @media (max-width: 768px) {
+            #n8n-chat-window {
+                width: 340px;
+                height: 500px;
+            }
+        }
+
+        /* ====== RESPONSIVE: Mobile (≤480px) ====== */
+        @media (max-width: 480px) {
+            #n8n-chat-widget {
+                bottom: 0;
+                right: 0;
+                left: 0;
+                top: 0;
+                pointer-events: none;
+            }
+            #n8n-chat-button {
+                pointer-events: auto;
+                position: fixed;
+                bottom: 16px;
+                right: 16px;
+                width: 52px;
+                height: 52px;
+            }
+            #n8n-chat-button svg {
+                width: 24px;
+                height: 24px;
+            }
+            /* Hide the toggle button when chat is open */
+            #n8n-chat-window.open ~ #n8n-chat-button {
+                display: none !important;
+            }
+            #n8n-chat-window {
+                pointer-events: auto;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                width: 100%;
+                height: 100%;
+                border-radius: 0;
+                border: none;
+                box-shadow: none;
+            }
+            .n8n-chat-header {
+                padding: 14px 16px;
+                padding-top: max(14px, env(safe-area-inset-top));
+            }
+            .n8n-chat-header-title {
+                font-size: 15px;
+            }
+            .n8n-chat-messages {
+                padding: 14px;
+                gap: 10px;
+            }
+            .n8n-chat-input-area {
+                padding: 10px 12px;
+                padding-bottom: max(10px, env(safe-area-inset-bottom));
+                gap: 8px;
+                align-items: center;
+            }
+            .n8n-chat-input {
+                flex: 1;
+                min-width: 0;
+                padding: 10px 14px;
+                font-size: 16px; /* Prevents iOS zoom on focus */
+            }
+            .n8n-chat-send {
+                padding: 10px 18px;
+                font-size: 14px;
+                border-radius: 12px;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+            .n8n-msg {
+                max-width: 90%;
+                padding: 10px 14px;
+                font-size: 14px;
+            }
+            .n8n-msg-wrapper {
+                max-width: 90%;
+            }
+            .n8n-prechat-form {
+                padding: 20px 16px;
+            }
+            .n8n-prechat-title {
+                font-size: 16px;
+            }
+            .n8n-prechat-subtitle {
+                font-size: 12px;
+                margin-bottom: 20px;
+            }
         }
     `;
 

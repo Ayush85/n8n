@@ -34,7 +34,9 @@ import {
     HelpCircle,
     Loader2,
     ToggleLeft,
-    ToggleRight
+    ToggleRight,
+    Menu,
+    ArrowLeft
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -47,7 +49,7 @@ function App() {
     const [newMessage, setNewMessage] = useState('');
     const [socket, setSocket] = useState(null);
     const [searchQuery, setSearchQuery] = useState('');
-    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
     const [currentView, setCurrentView] = useState('chats'); // 'chats' or 'analytics'
     const [analytics, setAnalytics] = useState(null);
     const [sessionSummary, setSessionSummary] = useState(null);
@@ -218,8 +220,15 @@ function App() {
 
     return (
         <div className="flex h-screen bg-[#020617] text-slate-200 overflow-hidden font-sans selection:bg-blue-500/30">
+            {/* Mobile sidebar backdrop */}
+            {isSidebarOpen && (
+                <div
+                    className="fixed inset-0 bg-black/60 z-[30] md:hidden"
+                    onClick={() => setIsSidebarOpen(false)}
+                />
+            )}
             {/* Elegant Sidebar */}
-            <div className={`${isSidebarOpen ? 'w-80' : 'w-0'} transition-all duration-300 border-r border-white/5 flex flex-col bg-slate-900/40 backdrop-blur-2xl z-20`}>
+            <div className={`${isSidebarOpen ? 'w-full md:w-80' : 'w-0'} overflow-hidden transition-all duration-300 border-r border-white/5 flex flex-col bg-slate-900 md:bg-slate-900/40 backdrop-blur-2xl z-[40] fixed md:relative inset-y-0 left-0 md:inset-auto`}>
                 <div className="p-6">
                     <div className="flex items-center justify-between mb-6">
                         <div className="flex items-center gap-2">
@@ -228,8 +237,8 @@ function App() {
                             </div>
                             <span className="font-bold text-lg tracking-tight text-white">Console</span>
                         </div>
-                        <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden text-slate-500 hover:text-white transition-colors">
-                            <SidebarIcon size={18} />
+                        <button onClick={() => setIsSidebarOpen(false)} className="text-slate-500 hover:text-white transition-colors md:hidden">
+                            <X size={18} />
                         </button>
                     </div>
 
@@ -279,7 +288,7 @@ function App() {
                         {filteredSessions.map(session => (
                             <button
                                 key={session.session_id}
-                                onClick={() => setActiveSession(session)}
+                                onClick={() => { setActiveSession(session); if (window.innerWidth < 768) setIsSidebarOpen(false); }}
                                 className={`w-full p-4  flex gap-4 rounded-2xl transition-all duration-200 group relative ${activeSession?.session_id === session.session_id ? 'bg-blue-600/10 border border-blue-500/20' : 'hover:bg-white/5 border border-transparent'}`}
                             >
                                 <div className="relative shrink-0">
@@ -387,8 +396,8 @@ function App() {
             {/* Main Workspace */}
             <div className="flex-1 flex flex-col relative overflow-hidden bg-[radial-gradient(circle_at_top_right,_rgba(37,99,235,0.05),_rgba(2,6,23,1)_40%)]">
                 {!isSidebarOpen && (
-                    <button onClick={() => setIsSidebarOpen(true)} className="absolute left-6 top-6 z-30 w-10 h-10 bg-slate-900/50 backdrop-blur-md border border-white/10 rounded-xl flex items-center justify-center text-slate-400 hover:text-white transition-all shadow-xl">
-                        <SidebarIcon size={18} />
+                    <button onClick={() => setIsSidebarOpen(true)} className="absolute left-4 top-5 z-[30] w-10 h-10 bg-slate-900/50 backdrop-blur-md border border-white/10 rounded-xl flex items-center justify-center text-slate-400 hover:text-white transition-all shadow-xl md:left-6 md:top-6">
+                        <Menu size={18} />
                     </button>
                 )}
 
@@ -396,7 +405,7 @@ function App() {
                 {currentView === 'analytics' && (
                     <div className="flex-1 overflow-y-auto custom-scrollbar">
                         {/* Analytics Header */}
-                        <div className="h-20 border-b border-white/5 px-8 flex items-center justify-between bg-slate-950/20 backdrop-blur-md sticky top-0 z-10">
+                        <div className="h-16 md:h-20 border-b border-white/5 px-4 md:px-8 flex items-center justify-between bg-slate-950/20 backdrop-blur-md sticky top-0 z-10">
                             <div className="flex items-center gap-4">
                                 <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center text-white shadow-lg shadow-purple-500/20">
                                     <BarChart3 className="w-5 h-5" />
@@ -416,11 +425,11 @@ function App() {
                         </div>
 
                         {/* Analytics Content */}
-                        <div className="p-8">
+                        <div className="p-4 md:p-8">
                             {analytics ? (
                                 <>
                                     {/* Stats Grid */}
-                                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6 md:mb-8">
                                         <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5">
                                             <div className="flex items-center gap-3 mb-3">
                                                 <div className="w-10 h-10 rounded-xl bg-blue-600/20 flex items-center justify-center">
@@ -467,7 +476,7 @@ function App() {
                                     </div>
 
                                     {/* Two Column Layout */}
-                                    <div className="grid lg:grid-cols-2 gap-6 mb-6">
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 mb-6">
                                         {/* Messages by Sender */}
                                         <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
                                             <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
@@ -560,7 +569,7 @@ function App() {
                                             <Hash size={16} className="text-cyan-400" />
                                             Top User Queries & Messages
                                         </h3>
-                                        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
                                             {topQueries.length > 0 ? topQueries.map((item, idx) => (
                                                 <div key={idx} className="bg-slate-900/50 rounded-xl p-3 border border-white/5">
                                                     <p className="text-sm text-slate-200 line-clamp-2">{item.query}</p>
@@ -701,30 +710,37 @@ function App() {
                 {currentView === 'chats' && activeSession ? (
                     <>
                         {/* Header */}
-                        <div className="h-20 border-b border-white/5 px-8 flex items-center justify-between bg-slate-950/20 backdrop-blur-md sticky top-0 z-10">
-                            <div className="flex items-center gap-4">
-                                <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
+                        <div className="h-16 md:h-20 border-b border-white/5 px-3 md:px-8 flex items-center justify-between bg-slate-950/20 backdrop-blur-md sticky top-0 z-10">
+                            <div className="flex items-center gap-2 md:gap-4 min-w-0">
+                                {/* Mobile back button */}
+                                <button
+                                    onClick={() => { setActiveSession(null); setIsSidebarOpen(true); }}
+                                    className="md:hidden w-9 h-9 rounded-xl bg-white/5 flex items-center justify-center text-slate-400 hover:text-white transition-colors shrink-0"
+                                >
+                                    <ArrowLeft size={18} />
+                                </button>
+                                <div className="w-9 h-9 md:w-11 md:h-11 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/20 shrink-0">
                                     <User className="w-5 h-5 ml-0.5" />
                                 </div>
                                 <div>
                                     <div className="flex items-center gap-2">
-                                        <h2 className="font-bold text-[17px] text-white tracking-tight">{activeSession.customer_name || 'Anonymous User'}</h2>
+                                        <h2 className="font-bold text-[14px] md:text-[17px] text-white tracking-tight truncate">{activeSession.customer_name || 'Anonymous User'}</h2>
                                         {/* User Contact Badge - only show if different from name */}
                                         {(activeSession.user_contact || activeSession.metadata?.user_contact || activeSession.metadata?.user_email || activeSession.metadata?.user_phone) &&
                                             (activeSession.customer_name !== activeSession.user_contact &&
                                                 activeSession.customer_name !== (activeSession.metadata?.user_contact || activeSession.metadata?.user_email || activeSession.metadata?.user_phone)) && (
-                                                <span className="text-[10px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full font-medium">
+                                                <span className="text-[10px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full font-medium hidden sm:inline">
                                                     {activeSession.user_contact || activeSession.metadata?.user_contact || activeSession.metadata?.user_email || activeSession.metadata?.user_phone}
                                                 </span>
                                             )}
                                     </div>
                                     <div className="flex items-center gap-2 mt-0.5">
                                         <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                                        <span className="text-[10px] text-slate-400 font-mono uppercase tracking-widest">{activeSession.session_id}</span>
+                                        <span className="text-[10px] text-slate-400 font-mono uppercase tracking-widest hidden sm:inline">{activeSession.session_id}</span>
                                     </div>
                                 </div>
                             </div>
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-1.5 md:gap-3 shrink-0">
                                 {/* Admin Mode Toggle */}
                                 <button
                                     onClick={async () => {
@@ -743,20 +759,20 @@ function App() {
                                             console.error('Failed to toggle mode:', err);
                                         }
                                     }}
-                                    className={`px-4 py-2 rounded-xl border flex items-center gap-2 transition-all ${activeSession.status === 'human'
+                                    className={`px-2 md:px-4 py-2 rounded-xl border flex items-center gap-1.5 md:gap-2 transition-all ${activeSession.status === 'human'
                                         ? 'bg-orange-600/20 border-orange-500/30 text-orange-400'
                                         : 'bg-green-600/20 border-green-500/30 text-green-400'
                                         }`}
                                     title={activeSession.status === 'ai' ? 'Switch to Human mode' : 'Switch to AI mode'}
                                 >
                                     {activeSession.status === 'human' ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-                                    <span className="text-xs font-medium">
+                                    <span className="text-xs font-medium hidden sm:inline">
                                         {activeSession.status === 'ai' ? '🤖 AI' : '👤 Human'}
                                     </span>
                                 </button>
                                 <button
                                     onClick={() => setShowSessionSummary(!showSessionSummary)}
-                                    className={`px-4 py-2 rounded-xl border flex items-center gap-2 transition-all ${showSessionSummary
+                                    className={`hidden md:flex px-4 py-2 rounded-xl border items-center gap-2 transition-all ${showSessionSummary
                                         ? 'bg-cyan-600/20 border-cyan-500/30 text-cyan-400'
                                         : 'border-white/10 text-slate-400 hover:bg-white/5 hover:text-white'
                                         }`}
@@ -764,10 +780,10 @@ function App() {
                                     <FileText size={16} />
                                     <span className="text-xs font-medium">Summary</span>
                                 </button>
-                                <button className="w-9 h-9 rounded-xl border border-white/10 flex items-center justify-center text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                                <button className="hidden sm:flex w-9 h-9 rounded-xl border border-white/10 items-center justify-center text-slate-400 hover:bg-white/5 hover:text-white transition-all">
                                     <ShieldCheck size={18} />
                                 </button>
-                                <button className="w-9 h-9 rounded-xl border border-white/10 flex items-center justify-center text-slate-400 hover:bg-white/5 hover:text-white transition-all">
+                                <button className="hidden sm:flex w-9 h-9 rounded-xl border border-white/10 items-center justify-center text-slate-400 hover:bg-white/5 hover:text-white transition-all">
                                     <MoreVertical size={18} />
                                 </button>
                             </div>
@@ -776,7 +792,7 @@ function App() {
                         {/* Main Chat Area with Optional Summary Panel */}
                         <div className="flex-1 flex overflow-hidden">
                             {/* Chat Screen */}
-                            <div className={`flex-1 overflow-y-auto p-10 space-y-8 custom-scrollbar scroll-smooth ${showSessionSummary ? 'pr-4' : ''}`}>
+                            <div className={`flex-1 overflow-y-auto p-4 md:p-10 space-y-4 md:space-y-8 custom-scrollbar scroll-smooth ${showSessionSummary ? 'md:pr-4' : ''}`}>
                                 {messages.map((msg, idx) => {
                                     const isPreviousSameSender = idx > 0 && messages[idx - 1].sender === msg.sender;
                                     const getSenderLabel = (sender) => {
@@ -816,7 +832,7 @@ function App() {
 
                             {/* Session Summary Panel */}
                             {showSessionSummary && sessionSummary && (
-                                <div className="w-80 border-l border-white/5 bg-slate-900/60 backdrop-blur-md overflow-y-auto custom-scrollbar">
+                                <div className="hidden lg:block w-80 border-l border-white/5 bg-slate-900/60 backdrop-blur-md overflow-y-auto custom-scrollbar">
                                     <div className="p-5">
                                         {/* Summary Header */}
                                         <div className="flex items-center justify-between mb-5">
@@ -1029,10 +1045,10 @@ function App() {
                         </div>
 
                         {/* Input Deck */}
-                        <div className="p-8 mt-auto">
-                            <div className="max-w-4xl mx-auto backdrop-blur-3xl bg-slate-900/60 border border-white/10 rounded-[28px] overflow-hidden shadow-3xl shadow-black/40 ring-1 ring-white/5 transition-all focus-within:ring-blue-500/50 focus-within:border-blue-500/30">
+                        <div className="p-3 md:p-8 mt-auto">
+                            <div className="max-w-4xl mx-auto backdrop-blur-3xl bg-slate-900/60 border border-white/10 rounded-2xl md:rounded-[28px] overflow-hidden shadow-3xl shadow-black/40 ring-1 ring-white/5 transition-all focus-within:ring-blue-500/50 focus-within:border-blue-500/30">
                                 <form onSubmit={handleSendMessage} className="flex flex-col">
-                                    <div className="flex items-center gap-2 px-6 pt-2 pb-0">
+                                    <div className="hidden md:flex items-center gap-2 px-6 pt-2 pb-0">
                                         <button type="button" className="p-2 text-slate-500 hover:text-blue-400 transition-colors rounded-lg hover:bg-white/5">
                                             <Paperclip size={18} />
                                         </button>
@@ -1042,10 +1058,10 @@ function App() {
                                         <div className="h-4 w-[1px] bg-white/10 mx-1"></div>
                                         <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-1">Rich Editor</span>
                                     </div>
-                                    <div className="flex items-center gap-4 p-4 pl-6">
+                                    <div className="flex items-center gap-2 md:gap-4 p-3 md:p-4 md:pl-6">
                                         <textarea
                                             rows="1"
-                                            className="flex-1 bg-transparent border-none py-2 text-[15px] outline-none placeholder:text-slate-600 text-slate-100 resize-none min-h-[44px]"
+                                            className="flex-1 bg-transparent border-none py-2 text-[14px] md:text-[15px] outline-none placeholder:text-slate-600 text-slate-100 resize-none min-h-[40px] md:min-h-[44px]"
                                             placeholder="Compose your reply..."
                                             value={newMessage}
                                             onChange={(e) => setNewMessage(e.target.value)}
@@ -1058,31 +1074,39 @@ function App() {
                                         <button
                                             type="submit"
                                             disabled={!newMessage.trim()}
-                                            className="bg-blue-600 hover:bg-blue-550 disabled:opacity-30 disabled:grayscale text-white h-12 px-8 rounded-2xl transition-all shadow-xl shadow-blue-600/20 active:scale-95 flex items-center gap-3 font-bold text-sm tracking-tight"
+                                            className="bg-blue-600 hover:bg-blue-550 disabled:opacity-30 disabled:grayscale text-white h-10 md:h-12 px-4 md:px-8 rounded-xl md:rounded-2xl transition-all shadow-xl shadow-blue-600/20 active:scale-95 flex items-center gap-2 md:gap-3 font-bold text-sm tracking-tight"
                                         >
                                             <Send size={18} />
-                                            <span>Send</span>
+                                            <span className="hidden sm:inline">Send</span>
                                         </button>
                                     </div>
                                 </form>
                             </div>
-                            <p className="mt-4 text-center text-[11px] text-slate-600 font-medium tracking-tight">
+                            <p className="hidden md:block mt-4 text-center text-[11px] text-slate-600 font-medium tracking-tight">
                                 Reply is sent instantly via <span className="text-blue-400/50 italic">Socket.io Protocol</span>
                             </p>
                         </div>
                     </>
                 ) : currentView === 'chats' && (
-                    <div className="flex-1 flex flex-col items-center justify-center p-20">
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 md:p-20">
                         <div className="relative group cursor-default">
                             <div className="absolute -inset-10 bg-blue-600/10 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-all duration-1000"></div>
-                            <div className="w-28 h-28 rounded-3xl bg-slate-900 border border-white/5 flex items-center justify-center mb-8 shadow-2xl relative z-10 transition-transform duration-500 hover:rotate-6">
-                                <MessageSquare size={50} className="text-blue-500/40" strokeWidth={1.5} />
+                            <div className="w-20 h-20 md:w-28 md:h-28 rounded-3xl bg-slate-900 border border-white/5 flex items-center justify-center mb-6 md:mb-8 shadow-2xl relative z-10 transition-transform duration-500 hover:rotate-6">
+                                <MessageSquare size={40} className="text-blue-500/40 md:hidden" strokeWidth={1.5} />
+                                <MessageSquare size={50} className="text-blue-500/40 hidden md:block" strokeWidth={1.5} />
                             </div>
                         </div>
-                        <h2 className="text-2xl font-bold text-white mb-3 tracking-tighter">Support Commander</h2>
+                        <h2 className="text-xl md:text-2xl font-bold text-white mb-3 tracking-tighter">Support Commander</h2>
                         <p className="text-slate-500 text-center max-w-[280px] leading-relaxed text-sm font-medium">
                             Welcome back. Select a guest from the left panel to start a high-performance manual session.
                         </p>
+                        <button
+                            onClick={() => setIsSidebarOpen(true)}
+                            className="mt-6 md:hidden px-6 py-3 rounded-xl bg-blue-600 text-white text-sm font-medium flex items-center gap-2 shadow-lg shadow-blue-600/20"
+                        >
+                            <MessageSquare size={16} />
+                            Open Chats
+                        </button>
                     </div>
                 )}
             </div>
