@@ -4,9 +4,9 @@
     // ============================================
     const CONFIG = {
         API_URL: window.N8N_CHAT_API_URL || 'http://localhost:3001',
-        N8N_WEBHOOK_URL: window.N8N_CHAT_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/b5ecaafa-5b1f-483f-b03e-4275a31bdb0a/chat',
-        CLIENT_ID: window.N8N_CHAT_CLIENT_ID || '8848',
-        SITE_NAME: window.N8N_CHAT_SITE_NAME || '8848 Momo House',
+        N8N_WEBHOOK_URL: window.N8N_CHAT_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/9a20ec1a-f508-419f-9194-ba933299ddff/chat',
+        CLIENT_ID: window.N8N_CHAT_CLIENT_ID || 'client_1',
+        SITE_NAME: window.N8N_CHAT_SITE_NAME || 'Fatafat Sewa',
         PRIMARY_COLOR: window.N8N_CHAT_PRIMARY_COLOR || '#2563eb',
         SOCKET_IO_CDN: 'https://cdn.socket.io/4.7.2/socket.io.min.js',
         MARKED_CDN: 'https://cdn.jsdelivr.net/npm/marked/marked.min.js',

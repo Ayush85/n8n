@@ -7,6 +7,7 @@ import pg from 'pg';
 import OpenAI from 'openai';
 import logger from './config/logger.js';
 import { MessageSchema } from './schemas/chat.js';
+import { meta } from 'zod/v4/core';
 
 // OpenAI setup
 const openai = new OpenAI({
@@ -30,14 +31,22 @@ const io = new Server(httpServer, {
     }
 });
 
-// Database setup
+// Database setup with Supabase-optimized pool configuration
 const pool = new Pool({
     user: process.env.DB_USER || 'n8n',
     host: process.env.DB_HOST || 'localhost',
     database: process.env.DB_NAME || 'n8n_data',
     password: process.env.DB_PASSWORD || 'n8n_password',
     port: parseInt(process.env.DB_PORT || '5432'),
-    ssl: process.env.DB_HOST && !process.env.DB_HOST.includes('localhost') ? { rejectUnauthorized: false } : false
+    ssl: process.env.DB_HOST && !process.env.DB_HOST.includes('localhost') ? { rejectUnauthorized: false } : false,
+    // Supabase pooler configuration
+    max: 10, // Maximum number of clients in the pool
+    idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+    connectionTimeoutMillis: 10000, // Return an error after 10 seconds if connection could not be established
+    allowExitOnIdle: false, // Don't allow the pool to exit when all clients are idle
+    // Keepalive settings to prevent connection drops
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10000
 });
 
 pool.on('connect', () => {
@@ -54,7 +63,7 @@ app.get('/health', (req, res) => {
 });
 
 // N8N Webhook URL (from environment or default)
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/b5ecaafa-5b1f-483f-b03e-4275a31bdb0a/chat';
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 
 // Helper function to parse n8n response (handles multiple layers of JSON stringification)
 function parseN8nResponse(data) {
@@ -214,6 +223,7 @@ app.post('/api/chat', async (req, res, next) => {
             body: JSON.stringify({
                 action: action || 'sendMessage',
                 sessionId,
+                client_id: metadata.client_id,
                 chatInput,
                 metadata
             })
