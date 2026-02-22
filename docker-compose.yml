@@ -18,6 +18,8 @@ services:
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
       - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ONESIGNAL_APP_ID=${ONESIGNAL_APP_ID}
+      - ONESIGNAL_API_KEY=${ONESIGNAL_API_KEY}
       - NODE_ENV=production
     ports:
       - "3001:3001"

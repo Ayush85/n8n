@@ -3,7 +3,7 @@
     // CONFIGURATION - Customize these values
     // ============================================
     const CONFIG = {
-        API_URL: window.N8N_CHAT_API_URL || 'https://chat.aydexis.com',
+        API_URL: window.N8N_CHAT_API_URL || 'https://staging.chat.aydexis.com',
         N8N_WEBHOOK_URL: window.N8N_CHAT_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/9a20ec1a-f508-419f-9194-ba933299ddff/chat',
         CLIENT_ID: window.N8N_CHAT_CLIENT_ID || 'client_1',
         SITE_NAME: window.N8N_CHAT_SITE_NAME || 'Fatafat Sewa',
@@ -460,6 +460,26 @@
     const styleSheet = document.createElement("style");
     styleSheet.innerText = styles;
     document.head.appendChild(styleSheet);
+
+    // ============================================
+    // ONESIGNAL PUSH NOTIFICATIONS
+    // ============================================
+    (function initOneSignal() {
+        // Skip if already loaded
+        if (window.OneSignal || document.querySelector('script[src*="OneSignalSDK"]')) return;
+
+        const osScript = document.createElement('script');
+        osScript.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
+        osScript.defer = true;
+        document.head.appendChild(osScript);
+
+        window.OneSignalDeferred = window.OneSignalDeferred || [];
+        window.OneSignalDeferred.push(async function (OneSignal) {
+            await OneSignal.init({
+                appId: "591d53f0-1ba6-4d65-954f-20aca14443d4",
+            });
+        });
+    })();
 
     const widget = document.createElement('div');
     widget.id = 'n8n-chat-widget';

@@ -64,6 +64,43 @@ app.get('/health', (req, res) => {
 // N8N Webhook URL (from environment or default)
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 
+// OneSignal Push Notification Helper
+async function sendPushNotification({ heading, content, url }) {
+    const appId = process.env.ONESIGNAL_APP_ID;
+    const apiKey = process.env.ONESIGNAL_API_KEY;
+
+    if (!appId || !apiKey) {
+        logger.warn('OneSignal credentials not configured, skipping push notification');
+        return;
+    }
+
+    try {
+        const response = await fetch('https://api.onesignal.com/notifications', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Key ${apiKey}`
+            },
+            body: JSON.stringify({
+                app_id: appId,
+                included_segments: ['All'],
+                headings: { en: heading || 'New Notification' },
+                contents: { en: content || 'You have a new notification' },
+                url: url || undefined
+            })
+        });
+
+        const result = await response.json();
+        if (result.errors) {
+            logger.error('OneSignal notification error:', result.errors);
+        } else {
+            logger.info(`Push notification sent successfully (ID: ${result.id})`);
+        }
+    } catch (error) {
+        logger.error('Failed to send push notification:', error);
+    }
+}
+
 // Helper function to parse n8n response (handles multiple layers of JSON stringification)
 function parseN8nResponse(data) {
     let parsed = data;
