@@ -547,11 +547,12 @@ function App() {
                             {/* Users Table */}
                             <div className="bg-slate-800/30 border border-white/5 rounded-2xl overflow-hidden">
                                 {/* Table Header */}
-                                <div className="grid grid-cols-[1fr_1fr_120px_100px_120px_90px] gap-4 px-5 py-3 border-b border-white/5 bg-slate-900/40">
+                                <div className="grid grid-cols-[1fr_1fr_120px_60px_100px_120px_90px] gap-4 px-5 py-3 border-b border-white/5 bg-slate-900/40">
                                     {[
                                         { label: 'User', field: 'customer_name' },
                                         { label: 'Contact / IP', field: 'user_contact' },
                                         { label: 'Site / Origin', field: null },
+                                        { label: 'Chats', field: null },
                                         { label: 'Status', field: 'status' },
                                         { label: 'Last Active', field: 'last_message_at' },
                                         { label: 'Started', field: 'created_at' },
@@ -589,7 +590,7 @@ function App() {
                                         return (
                                             <div
                                                 key={session.session_id}
-                                                className="grid grid-cols-[1fr_1fr_120px_100px_120px_90px] gap-4 px-5 py-4 hover:bg-white/[0.02] transition-colors group cursor-pointer"
+                                                className="grid grid-cols-[1fr_1fr_120px_60px_100px_120px_90px] gap-4 px-5 py-3.5 border-b border-white/5 hover:bg-white/3 transition-colors cursor-pointer items-start"
                                                 onClick={() => { setActiveSession(session); setCurrentView('chats'); }}
                                             >
                                                 {/* User */}
@@ -642,6 +643,22 @@ function App() {
                                                     ) : (
                                                         !siteName && <span className="text-xs text-slate-600 italic">—</span>
                                                     )}
+                                                </div>
+
+                                                {/* Status */}
+                                                <div className="flex items-center">
+                                                    {/* Chats count */}
+                                                    {(() => {
+                                                        const contact = session.user_contact;
+                                                        const count = contact
+                                                            ? sessions.filter(s => s.user_contact === contact).length
+                                                            : 1;
+                                                        return (
+                                                            <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-blue-500/15 text-blue-400 text-xs font-bold border border-blue-500/20" title={`${count} conversation${count !== 1 ? 's' : ''}`}>
+                                                                {count}
+                                                            </span>
+                                                        );
+                                                    })()}
                                                 </div>
 
                                                 {/* Status */}

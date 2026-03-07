@@ -357,7 +357,150 @@
             transform: none;
         }
 
-        /* ====== RESPONSIVE: Tablet (≤768px) ====== */
+        /* ====================================
+           TAB BAR
+        ====================================== */
+        .n8n-tab-bar {
+            display: none;
+            align-items: stretch;
+            background: #fff;
+            border-bottom: 2px solid #e2e8f0;
+            flex-shrink: 0;
+        }
+        .n8n-tab-bar.visible { display: flex; }
+        .n8n-tab {
+            flex: 1;
+            padding: 10px 0;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #94a3b8;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+            letter-spacing: 0.01em;
+        }
+        .n8n-tab:hover { color: #475569; }
+        .n8n-tab.active { color: #0f67b2; border-bottom-color: #0f67b2; }
+        .n8n-tab-panel { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+        .n8n-tab-panel.active { display: flex; }
+
+        /* ====================================
+           CHAT ACTION BAR (top of Chat panel)
+        ====================================== */
+        .n8n-chat-action-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 14px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e8eef4;
+            flex-shrink: 0;
+        }
+        .n8n-active-session-label {
+            flex: 1;
+            font-size: 11px;
+            color: #64748b;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* ====================================
+           HISTORY PANEL
+        ====================================== */
+        .n8n-history-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            border-bottom: 1px solid #e8eef4;
+            background: #f8fafc;
+            flex-shrink: 0;
+        }
+        .n8n-history-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        /* Shared New Chat button */
+        .n8n-new-chat-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: #0f67b2;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.15s;
+            white-space: nowrap;
+        }
+        .n8n-new-chat-btn:hover { background: #0a56a0; transform: scale(1.02); }
+        .n8n-new-chat-btn:active { transform: scale(0.98); }
+        .n8n-new-chat-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+        /* Session list */
+        .n8n-session-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 4px 0;
+        }
+        .n8n-session-item {
+            display: flex;
+            flex-direction: column;
+            padding: 11px 16px;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f5f9;
+            transition: background 0.15s;
+            gap: 4px;
+        }
+        .n8n-session-item:hover { background: #f0f7ff; }
+        .n8n-session-item.active-session {
+            background: #e8f4ff;
+            border-left: 3px solid #0f67b2;
+            padding-left: 13px;
+        }
+        .n8n-session-item:last-child { border-bottom: none; }
+        .n8n-session-item-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .n8n-session-item-meta {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 11px;
+            color: #94a3b8;
+        }
+        .n8n-session-item-badge {
+            padding: 2px 6px;
+            border-radius: 5px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .n8n-badge-ai   { background: rgba(16,185,129,0.12); color: #059669; }
+        .n8n-badge-human { background: rgba(239,68,68,0.12); color: #dc2626; }
+        .n8n-session-empty {
+            padding: 40px 16px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 13px;
+            line-height: 1.6;
+        }
         @media (max-width: 768px) {
             #n8n-chat-window {
                 width: 340px;
@@ -465,14 +608,22 @@
     widget.id = 'n8n-chat-widget';
     widget.innerHTML = `
         <div id="n8n-chat-window">
+            <!-- Header (always visible) -->
             <div class="n8n-chat-header">
                 <div>
                     <div class="n8n-chat-header-title">${CONFIG.SITE_NAME}<span id="n8n-mode-badge" class="n8n-mode-badge n8n-mode-ai">AI</span></div>
-                    <div class="n8n-chat-header-status" id="n8n-status">Online • Ready to help</div>
+                    <div class="n8n-chat-header-status" id="n8n-status">Online &bull; Ready to help</div>
                 </div>
                 <button class="n8n-chat-close" id="n8n-chat-close">&times;</button>
             </div>
-            <!-- Pre-chat Form -->
+
+            <!-- Tab Bar (hidden until user logs in) -->
+            <div class="n8n-tab-bar" id="n8n-tab-bar">
+                <button class="n8n-tab active" id="n8n-tab-chat" data-tab="chat">💬 Chat</button>
+                <button class="n8n-tab" id="n8n-tab-history" data-tab="history">📋 History</button>
+            </div>
+
+            <!-- Pre-chat Form (shown to new users) -->
             <div id="n8n-prechat-container" class="n8n-prechat-form" style="${userInfo ? 'display: none;' : ''}">
                 <div class="n8n-prechat-title">👋 Welcome!</div>
                 <div class="n8n-prechat-subtitle">Please provide your email or phone number so we can reach you.</div>
@@ -485,12 +636,28 @@
                     <button type="submit" class="n8n-prechat-submit">Start Chat</button>
                 </form>
             </div>
-            <!-- Chat Area -->
-            <div id="n8n-chat-messages" class="n8n-chat-messages" style="${userInfo ? '' : 'display: none;'}"></div>
-            <form id="n8n-chat-form" class="n8n-chat-input-area" style="${userInfo ? '' : 'display: none;'}">
-                <input type="text" id="n8n-chat-input" class="n8n-chat-input" placeholder="Type your message..." autocomplete="off">
-                <button type="submit" class="n8n-chat-send" id="n8n-chat-send">Send</button>
-            </form>
+
+            <!-- TAB PANEL: Chat -->
+            <div class="n8n-tab-panel active" id="n8n-panel-chat" style="${userInfo ? '' : 'display: none;'}">
+                <div class="n8n-chat-action-bar" id="n8n-chat-action-bar">
+                    <span class="n8n-active-session-label" id="n8n-active-session-title"></span>
+                    <button class="n8n-new-chat-btn" id="n8n-new-chat-btn-chat">+ New Chat</button>
+                </div>
+                <div id="n8n-chat-messages" class="n8n-chat-messages"></div>
+                <form id="n8n-chat-form" class="n8n-chat-input-area">
+                    <input type="text" id="n8n-chat-input" class="n8n-chat-input" placeholder="Type your message..." autocomplete="off">
+                    <button type="submit" class="n8n-chat-send" id="n8n-chat-send">Send</button>
+                </form>
+            </div>
+
+            <!-- TAB PANEL: History -->
+            <div class="n8n-tab-panel" id="n8n-panel-history" style="${userInfo ? '' : 'display: none;'}">
+                <div class="n8n-history-header">
+                    <span class="n8n-history-title">Your Conversations</span>
+                    <button class="n8n-new-chat-btn" id="n8n-new-chat-btn">+ New Chat</button>
+                </div>
+                <div class="n8n-session-list" id="n8n-session-list"></div>
+            </div>
         </div>
         <button id="n8n-chat-button">
             <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
@@ -515,6 +682,17 @@
     const prechatContainer = document.getElementById('n8n-prechat-container');
     const prechatForm = document.getElementById('n8n-prechat-form');
     const prechatContact = document.getElementById('n8n-prechat-contact');
+
+    // Tab bar elements
+    const tabBar = document.getElementById('n8n-tab-bar');
+    const tabChat = document.getElementById('n8n-tab-chat');
+    const tabHistory = document.getElementById('n8n-tab-history');
+    const panelChat = document.getElementById('n8n-panel-chat');
+    const panelHistory = document.getElementById('n8n-panel-history');
+
+    // Session/history panel elements
+    const sessionList = document.getElementById('n8n-session-list');
+    const newChatBtn = document.getElementById('n8n-new-chat-btn');
 
     // ============================================
     // HELPER FUNCTIONS
@@ -551,12 +729,48 @@
         }
     }
 
+    // Switch between tabs
+    function switchTab(tab) {
+        if (tab === 'chat') {
+            tabChat.classList.add('active');
+            tabHistory.classList.remove('active');
+            panelChat.style.display = 'flex';
+            panelHistory.style.display = 'none';
+            setTimeout(() => scrollToBottom(), 50);
+        } else {
+            tabHistory.classList.add('active');
+            tabChat.classList.remove('active');
+            panelHistory.style.display = 'flex';
+            panelChat.style.display = 'none';
+            // Refresh history list when switching to history tab
+            if (userInfo?.contact) refreshHistoryList();
+        }
+    }
+
+    tabChat.addEventListener('click', () => switchTab('chat'));
+    tabHistory.addEventListener('click', () => switchTab('history'));
+
+    // Populate + refresh the History tab session list
+    async function refreshHistoryList() {
+        sessionList.innerHTML = '<div class="n8n-session-empty">Loading...</div>';
+        try {
+            const res = await fetch(`${CONFIG.API_URL}/api/sessions/by-contact/${encodeURIComponent(userInfo.contact)}`);
+            const data = await res.json();
+            renderSessionList(data.sessions || []);
+        } catch (e) {
+            sessionList.innerHTML = '<div class="n8n-session-empty">Failed to load history.</div>';
+        }
+    }
+
     // Show chat interface after successful pre-chat form submission
     function showChatInterface() {
         prechatContainer.style.display = 'none';
-        chatMessages.style.display = 'flex';
-        chatForm.style.display = 'flex';
-        // Scroll to bottom after a short delay to ensure rendering is complete
+        // Show tab bar and activate chat panel
+        tabBar.classList.add('visible');
+        panelChat.style.display = 'flex';
+        panelHistory.style.display = 'none';
+        tabChat.classList.add('active');
+        tabHistory.classList.remove('active');
         setTimeout(() => scrollToBottom(), 100);
     }
 
@@ -619,6 +833,110 @@
         return digits.length >= 7;
     }
 
+    // ============================================
+    // SESSION PICKER HELPERS
+    // ============================================
+
+    function formatRelativeDate(dateStr) {
+        if (!dateStr) return '';
+        const d = new Date(dateStr);
+        const now = new Date();
+        const diff = (now - d) / 1000;
+        if (diff < 60) return 'just now';
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+        if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+        return d.toLocaleDateString();
+    }
+
+    // Render sessions into the History tab list
+    function renderSessionList(sessions) {
+        sessionList.innerHTML = '';
+        if (sessions.length === 0) {
+            sessionList.innerHTML = '<div class="n8n-session-empty">No conversations yet. Start a new chat!</div>';
+            return;
+        }
+        sessions.forEach(s => {
+            const title = s.title || s.first_message?.slice(0, 55) || 'Untitled Chat';
+            const date = formatRelativeDate(s.last_message_at || s.updated_at);
+            const badgeClass = s.status === 'human' ? 'n8n-badge-human' : 'n8n-badge-ai';
+            const badgeLabel = s.status === 'human' ? 'Human' : 'AI';
+            const isActive = s.session_id === sessionId;
+
+            const item = document.createElement('div');
+            item.className = 'n8n-session-item' + (isActive ? ' active-session' : '');
+            item.innerHTML = `
+                <div class="n8n-session-item-title">${isActive ? '▶ ' : ''}${title}</div>
+                <div class="n8n-session-item-meta">
+                    <span>${date}</span>
+                    <span class="n8n-session-item-badge ${badgeClass}">${badgeLabel}</span>
+                </div>
+            `;
+            item.addEventListener('click', () => openSession(s));
+            sessionList.appendChild(item);
+        });
+    }
+
+    async function openSession(s) {
+        await switchToSession(s.session_id, s.status || 'ai');
+        switchTab('chat');
+    }
+
+    async function startNewChat() {
+        try {
+            newChatBtn.disabled = true;
+            newChatBtn.textContent = 'Creating...';
+            const resp = await fetch(`${CONFIG.API_URL}/api/sessions/new`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contact: userInfo.contact, customerName: userInfo.contact })
+            });
+            const data = await resp.json();
+            if (!data.session_id) throw new Error('No session_id returned');
+
+            // Switch to new session
+            sessionId = data.session_id;
+            localStorage.setItem('n8n_chat_session_id', sessionId);
+            sessionMode = 'ai';
+            localStorage.setItem('n8n_chat_mode', 'ai');
+            if (socket) socket.emit('join_session', sessionId);
+
+            chatMessages.innerHTML = '';
+            setMode('ai');
+            switchTab('chat');
+            addSystemMessage('New conversation started. How can we help you?');
+        } catch (err) {
+            console.error('Failed to create new session:', err);
+            newChatBtn.textContent = '+ New Chat';
+        } finally {
+            newChatBtn.disabled = false;
+            newChatBtn.textContent = '+ New Chat';
+        }
+    }
+
+    if (newChatBtn) newChatBtn.addEventListener('click', startNewChat);
+
+    // New Chat button inside the Chat panel
+    const newChatBtnChat = document.getElementById('n8n-new-chat-btn-chat');
+    if (newChatBtnChat) newChatBtnChat.addEventListener('click', startNewChat);
+
+    // ✏️ Header "New Chat" button — start a fresh session from within the chat
+    const headerNewChatBtn = document.getElementById('n8n-header-new-chat');
+    if (headerNewChatBtn) headerNewChatBtn.addEventListener('click', startNewChat);
+
+    // ☰ Header "My Chats" button — go back to session picker
+    const headerMyChatsBtn = document.getElementById('n8n-header-my-chats');
+    if (headerMyChatsBtn) headerMyChatsBtn.addEventListener('click', async () => {
+        if (!userInfo?.contact) return;
+        try {
+            const res = await fetch(`${CONFIG.API_URL}/api/sessions/by-contact/${encodeURIComponent(userInfo.contact)}`);
+            const data = await res.json();
+            showSessionPicker(data.sessions || []);
+        } catch (err) {
+            console.error('Failed to load sessions:', err);
+        }
+    });
+
     // Pre-chat form submission handler
     prechatForm.onsubmit = async (e) => {
         e.preventDefault();
@@ -639,7 +957,7 @@
             return;
         }
 
-        // Save user info - determine if email or phone
+        // Save user info
         userInfo = {
             contact: contact,
             email: isEmail ? contact : null,
@@ -647,35 +965,42 @@
         };
         localStorage.setItem('n8n_chat_user_info', JSON.stringify(userInfo));
 
-        // Check for existing session by contact (session continuity)
+        const submitBtn = prechatForm.querySelector('.n8n-prechat-submit');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Loading...';
+
+        // Fetch ALL sessions for this contact
         try {
-            console.log(`🔍 Checking for existing session with contact: ${contact}`);
+            console.log(`🔍 Fetching sessions for contact: ${contact}`);
             const response = await fetch(`${CONFIG.API_URL}/api/sessions/by-contact/${encodeURIComponent(contact)}`);
             const data = await response.json();
+            const sessions = data.sessions || [];
 
-            if (data.found && data.session) {
-                // Returning user - restore previous session
-                console.log(`✅ Found existing session: ${data.session.session_id}`);
-
-                // Switch to the existing session
-                await switchToSession(data.session.session_id, data.session.status || 'ai');
-
-                // Show chat interface
+            if (sessions.length === 1) {
+                // Exactly one session — restore it directly (no picker needed)
+                console.log(`✅ Single session found, restoring: ${sessions[0].session_id}`);
+                await switchToSession(sessions[0].session_id, sessions[0].status || 'ai');
                 showChatInterface();
-
-                // Show welcome back message
-                addSystemMessage(`Welcome back! Your previous conversation has been restored.`);
-
                 return;
-            } else {
-                console.log('📝 No existing session found, creating new session');
             }
+
+            if (sessions.length > 1) {
+                // Multiple sessions — show picker
+                console.log(`📋 ${sessions.length} sessions found, showing picker`);
+                showSessionPicker(sessions);
+                return;
+            }
+
+            // No existing sessions — new user flow
+            console.log('📝 No existing sessions, starting fresh');
         } catch (err) {
-            console.error('Failed to check for existing session:', err);
-            // Continue with new session flow on error
+            console.error('Failed to fetch sessions:', err);
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Start Chat';
         }
 
-        // New user flow - save user info to server
+        // New user: save user info then start chat
         try {
             await fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}/user-info`, {
                 method: 'PUT',
@@ -683,14 +1008,11 @@
                 body: JSON.stringify(userInfo)
             });
         } catch (err) {
-            console.error('Failed to save user info to server:', err);
+            console.error('Failed to save user info:', err);
         }
 
-        // Show chat interface
         showChatInterface();
-
-        // Add welcome message
-        addSystemMessage(`Welcome! How can we help you today?`);
+        addSystemMessage('Welcome! How can we help you today?');
     };
 
     function addMessage(sender, content) {
@@ -1024,6 +1346,11 @@
                 breaks: true,
                 gfm: true
             });
+        }
+
+        // If this is a returning user (already logged in), show the tabs immediately
+        if (userInfo) {
+            showChatInterface(); // makes tab bar visible, shows chat panel
         }
     });
 

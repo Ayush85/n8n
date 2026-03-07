@@ -56,6 +56,20 @@ async function migrate() {
         `);
         console.log('✅ user_contact column verified');
 
+        // Safely add title column for multi-session chat
+        await pool.query(`
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'sessions' AND column_name = 'title'
+                ) THEN
+                    ALTER TABLE sessions ADD COLUMN title VARCHAR(100);
+                END IF;
+            END $$;
+        `);
+        console.log('✅ title column verified');
+
         // --------------------------------------------------------
         // 2. MESSAGES TABLE
         // --------------------------------------------------------
