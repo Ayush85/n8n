@@ -36,11 +36,24 @@ import {
     ToggleLeft,
     ToggleRight,
     Menu,
-    ArrowLeft
+    ArrowLeft,
+    Phone,
+    Mail,
+    Globe,
+    MapPin,
+    ExternalLink
 } from 'lucide-react';
 import { format } from 'date-fns';
 
 const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const ADMIN_SECRET = import.meta.env.VITE_ADMIN_SECRET || '';
+
+// Helper: fetch with admin Authorization header pre-attached
+const adminFetch = (url, options = {}) => {
+    const headers = { 'Content-Type': 'application/json', ...options.headers };
+    if (ADMIN_SECRET) headers['Authorization'] = `Bearer ${ADMIN_SECRET}`;
+    return fetch(url, { ...options, headers });
+};
 
 function App() {
     const [sessions, setSessions] = useState([]);
@@ -50,7 +63,7 @@ function App() {
     const [socket, setSocket] = useState(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 768);
-    const [currentView, setCurrentView] = useState('chats'); // 'chats' or 'analytics'
+    const [currentView, setCurrentView] = useState('chats'); // 'chats' | 'analytics' | 'users'
     const [analytics, setAnalytics] = useState(null);
     const [sessionSummary, setSessionSummary] = useState(null);
     const [topQueries, setTopQueries] = useState([]);
@@ -60,6 +73,9 @@ function App() {
     const [loadingSummary, setLoadingSummary] = useState(false);
     const [chatReport, setChatReport] = useState(null);
     const [loadingReport, setLoadingReport] = useState(false);
+    const [userSearch, setUserSearch] = useState('');
+    const [userSortField, setUserSortField] = useState('updated_at');
+    const [userSortDir, setUserSortDir] = useState('desc');
     const messagesEndRef = useRef(null);
 
     // Initialize Socket (only once on mount)
@@ -103,7 +119,7 @@ function App() {
     // Fetch Sessions
     const fetchSessions = async () => {
         try {
-            const res = await fetch(`${SOCKET_URL}/api/sessions`);
+            const res = await adminFetch(`${SOCKET_URL}/api/sessions`);
             const data = await res.json();
             setSessions(data);
         } catch (err) {
@@ -114,7 +130,7 @@ function App() {
     // Fetch Analytics
     const fetchAnalytics = async () => {
         try {
-            const res = await fetch(`${SOCKET_URL}/api/analytics`);
+            const res = await adminFetch(`${SOCKET_URL}/api/analytics`);
             const data = await res.json();
             setAnalytics(data);
         } catch (err) {
@@ -125,7 +141,7 @@ function App() {
     // Fetch Top Queries
     const fetchTopQueries = async () => {
         try {
-            const res = await fetch(`${SOCKET_URL}/api/analytics/top-queries?limit=10`);
+            const res = await adminFetch(`${SOCKET_URL}/api/analytics/top-queries?limit=10`);
             const data = await res.json();
             setTopQueries(data.topQueries || []);
         } catch (err) {
@@ -137,7 +153,7 @@ function App() {
     const fetchSessionSummary = async (sessionId) => {
         setLoadingSummary(true);
         try {
-            const res = await fetch(`${SOCKET_URL}/api/sessions/${sessionId}/summary`);
+            const res = await adminFetch(`${SOCKET_URL}/api/sessions/${sessionId}/summary`);
             const data = await res.json();
             setSessionSummary(data);
         } catch (err) {
@@ -150,9 +166,8 @@ function App() {
     const fetchChatReport = async () => {
         setLoadingReport(true);
         try {
-            const res = await fetch(`${SOCKET_URL}/api/reports/chat`, {
+            const res = await adminFetch(`${SOCKET_URL}/api/reports/chat`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ limit: 20 })
             });
             const data = await res.json();
@@ -181,7 +196,7 @@ function App() {
     // Fetch Messages when session changes
     useEffect(() => {
         if (activeSession) {
-            fetch(`${SOCKET_URL}/api/sessions/${activeSession.session_id}/messages`)
+            adminFetch(`${SOCKET_URL}/api/sessions/${activeSession.session_id}/messages`)
                 .then(res => res.json())
                 .then(data => {
                     setMessages(data);
@@ -214,9 +229,46 @@ function App() {
     };
 
     const filteredSessions = sessions.filter(s =>
-    (s.customer_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.session_id.toLowerCase().includes(searchQuery.toLowerCase()))
+        s.customer_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.session_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.user_contact?.toLowerCase().includes(searchQuery.toLowerCase())
     );
+
+    // Users view: deduplicated list based on sessions (each session = one user entry)
+    const filteredUsers = sessions
+        .filter(s => {
+            const q = userSearch.toLowerCase();
+            return (
+                !q ||
+                s.customer_name?.toLowerCase().includes(q) ||
+                s.user_contact?.toLowerCase().includes(q) ||
+                s.session_id.toLowerCase().includes(q) ||
+                s.metadata?.ip_address?.toLowerCase().includes(q) ||
+                s.metadata?.site_name?.toLowerCase().includes(q) ||
+                s.metadata?.host?.toLowerCase().includes(q)
+            );
+        })
+        .sort((a, b) => {
+            let av = a[userSortField] || a.metadata?.[userSortField] || '';
+            let bv = b[userSortField] || b.metadata?.[userSortField] || '';
+            if (userSortField === 'created_at' || userSortField === 'updated_at' || userSortField === 'last_message_at') {
+                av = new Date(av || 0).getTime();
+                bv = new Date(bv || 0).getTime();
+            } else {
+                av = String(av).toLowerCase();
+                bv = String(bv).toLowerCase();
+            }
+            return userSortDir === 'desc' ? (bv > av ? 1 : -1) : (av > bv ? 1 : -1);
+        });
+
+    const toggleUserSort = (field) => {
+        if (userSortField === field) {
+            setUserSortDir(d => d === 'desc' ? 'asc' : 'desc');
+        } else {
+            setUserSortField(field);
+            setUserSortDir('desc');
+        }
+    };
 
     return (
         <div className="flex h-screen bg-[#020617] text-slate-200 overflow-hidden font-sans selection:bg-blue-500/30">
@@ -243,26 +295,41 @@ function App() {
                     </div>
 
                     {/* Navigation Tabs */}
-                    <div className="flex gap-2 mb-6">
+                    <div className="flex flex-col gap-1.5 mb-6">
+                        <div className="flex gap-1.5">
+                            <button
+                                onClick={() => setCurrentView('chats')}
+                                className={`flex-1 py-2.5 px-3 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-1.5 ${currentView === 'chats'
+                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                                    : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
+                                    }`}
+                            >
+                                <MessageSquare size={15} />
+                                Chats
+                            </button>
+                            <button
+                                onClick={() => setCurrentView('analytics')}
+                                className={`flex-1 py-2.5 px-3 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-1.5 ${currentView === 'analytics'
+                                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30'
+                                    : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
+                                    }`}
+                            >
+                                <BarChart3 size={15} />
+                                Analytics
+                            </button>
+                        </div>
                         <button
-                            onClick={() => setCurrentView('chats')}
-                            className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${currentView === 'chats'
-                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
+                            onClick={() => setCurrentView('users')}
+                            className={`w-full py-2.5 px-3 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-1.5 ${currentView === 'users'
+                                ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30'
                                 : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
                                 }`}
                         >
-                            <MessageSquare size={16} />
-                            Chats
-                        </button>
-                        <button
-                            onClick={() => setCurrentView('analytics')}
-                            className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2 ${currentView === 'analytics'
-                                ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30'
-                                : 'bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
-                                }`}
-                        >
-                            <BarChart3 size={16} />
-                            Analytics
+                            <Users size={15} />
+                            Users
+                            <span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-md ${currentView === 'users' ? 'bg-white/20 text-white' : 'bg-white/10 text-slate-400'}`}>
+                                {sessions.length}
+                            </span>
                         </button>
                     </div>
 
@@ -399,6 +466,229 @@ function App() {
                     <button onClick={() => setIsSidebarOpen(true)} className="absolute left-4 top-5 z-[30] w-10 h-10 bg-slate-900/50 backdrop-blur-md border border-white/10 rounded-xl flex items-center justify-center text-slate-400 hover:text-white transition-all shadow-xl md:left-6 md:top-6">
                         <Menu size={18} />
                     </button>
+                )}
+
+                {/* Users Page View */}
+                {currentView === 'users' && (
+                    <div className="flex-1 overflow-y-auto custom-scrollbar">
+                        {/* Users Header */}
+                        <div className="h-16 md:h-20 border-b border-white/5 px-4 md:px-8 flex items-center justify-between bg-slate-950/20 backdrop-blur-md sticky top-0 z-10">
+                            <div className="flex items-center gap-4">
+                                <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-600 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
+                                    <Users className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h2 className="font-bold text-[17px] text-white tracking-tight">Chat Users</h2>
+                                    <p className="text-[10px] text-slate-400 mt-0.5">{sessions.length} total users across all sessions</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                                    <input
+                                        type="text"
+                                        placeholder="Search users..."
+                                        className="bg-white/5 border border-white/10 rounded-xl py-2 pl-9 pr-4 text-xs focus:ring-2 focus:ring-emerald-500/50 transition-all outline-none text-slate-200 placeholder:text-slate-500 w-48"
+                                        value={userSearch}
+                                        onChange={e => setUserSearch(e.target.value)}
+                                    />
+                                </div>
+                                <button
+                                    onClick={fetchSessions}
+                                    className="px-4 py-2 rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 hover:text-white transition-all flex items-center gap-2 text-xs font-medium"
+                                >
+                                    <Activity size={14} />
+                                    Refresh
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Stats Strip */}
+                        <div className="px-4 md:px-8 pt-6 pb-4">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                                <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <div className="w-8 h-8 rounded-lg bg-emerald-600/20 flex items-center justify-center">
+                                            <Users size={16} className="text-emerald-400" />
+                                        </div>
+                                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">Total Users</span>
+                                    </div>
+                                    <p className="text-2xl font-bold text-white">{sessions.length}</p>
+                                </div>
+                                <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <div className="w-8 h-8 rounded-lg bg-blue-600/20 flex items-center justify-center">
+                                            <Mail size={16} className="text-blue-400" />
+                                        </div>
+                                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">With Contact</span>
+                                    </div>
+                                    <p className="text-2xl font-bold text-white">{sessions.filter(s => s.user_contact).length}</p>
+                                </div>
+                                <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <div className="w-8 h-8 rounded-lg bg-orange-600/20 flex items-center justify-center">
+                                            <Activity size={16} className="text-orange-400" />
+                                        </div>
+                                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">Human Mode</span>
+                                    </div>
+                                    <p className="text-2xl font-bold text-white">{sessions.filter(s => s.status === 'human').length}</p>
+                                </div>
+                                <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <div className="w-8 h-8 rounded-lg bg-green-600/20 flex items-center justify-center">
+                                            <Bot size={16} className="text-green-400" />
+                                        </div>
+                                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">AI Mode</span>
+                                    </div>
+                                    <p className="text-2xl font-bold text-white">{sessions.filter(s => s.status === 'ai').length}</p>
+                                </div>
+                            </div>
+
+                            {/* Users Table */}
+                            <div className="bg-slate-800/30 border border-white/5 rounded-2xl overflow-hidden">
+                                {/* Table Header */}
+                                <div className="grid grid-cols-[1fr_1fr_120px_100px_120px_90px] gap-4 px-5 py-3 border-b border-white/5 bg-slate-900/40">
+                                    {[
+                                        { label: 'User', field: 'customer_name' },
+                                        { label: 'Contact / IP', field: 'user_contact' },
+                                        { label: 'Site / Origin', field: null },
+                                        { label: 'Status', field: 'status' },
+                                        { label: 'Last Active', field: 'last_message_at' },
+                                        { label: 'Started', field: 'created_at' },
+                                    ].map(({ label, field }) => (
+                                        <button
+                                            key={label}
+                                            onClick={() => field && toggleUserSort(field)}
+                                            className={`text-left text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 transition-colors ${field ? 'hover:text-white cursor-pointer' : 'cursor-default'
+                                                } ${userSortField === field ? 'text-emerald-400' : 'text-slate-500'}`}
+                                        >
+                                            {label}
+                                            {field && userSortField === field && (
+                                                <span className="text-emerald-400">{userSortDir === 'desc' ? '↓' : '↑'}</span>
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* Table Rows */}
+                                <div className="divide-y divide-white/[0.03]">
+                                    {filteredUsers.length === 0 ? (
+                                        <div className="flex flex-col items-center justify-center py-16">
+                                            <div className="w-14 h-14 bg-white/5 rounded-full flex items-center justify-center mb-4 border border-white/5">
+                                                <Users className="text-slate-600" size={24} />
+                                            </div>
+                                            <p className="text-sm text-slate-500 font-medium">No users found</p>
+                                            <p className="text-xs text-slate-600 mt-1">Try adjusting your search</p>
+                                        </div>
+                                    ) : filteredUsers.map((session) => {
+                                        const contact = session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone;
+                                        const ip = session.metadata?.ip_address;
+                                        const siteName = session.metadata?.site_name;
+                                        const host = session.metadata?.host;
+                                        const isOnline = session.last_message_at && (new Date() - new Date(session.last_message_at)) < 300000;
+                                        return (
+                                            <div
+                                                key={session.session_id}
+                                                className="grid grid-cols-[1fr_1fr_120px_100px_120px_90px] gap-4 px-5 py-4 hover:bg-white/[0.02] transition-colors group cursor-pointer"
+                                                onClick={() => { setActiveSession(session); setCurrentView('chats'); }}
+                                            >
+                                                {/* User */}
+                                                <div className="flex items-center gap-3 min-w-0">
+                                                    <div className="relative shrink-0">
+                                                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-slate-700 to-slate-800 border border-white/10 flex items-center justify-center text-slate-300">
+                                                            <User size={16} />
+                                                        </div>
+                                                        <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#020617] ${isOnline ? 'bg-green-500' : 'bg-slate-500'}`} />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <p className="text-sm font-semibold text-white truncate group-hover:text-emerald-400 transition-colors">
+                                                            {session.customer_name || <span className="text-slate-500 italic font-normal">Anonymous</span>}
+                                                        </p>
+                                                        <p className="text-[10px] text-slate-600 font-mono truncate">{session.session_id.slice(0, 20)}…</p>
+                                                    </div>
+                                                </div>
+
+                                                {/* Contact / IP */}
+                                                <div className="flex flex-col justify-center gap-1 min-w-0">
+                                                    {contact ? (
+                                                        <div className="flex items-center gap-1.5">
+                                                            <Mail size={11} className="text-emerald-400 shrink-0" />
+                                                            <span className="text-xs text-emerald-300 truncate">{contact}</span>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-xs text-slate-600 italic">No contact</span>
+                                                    )}
+                                                    {ip && (
+                                                        <div className="flex items-center gap-1.5">
+                                                            <MapPin size={10} className="text-slate-500 shrink-0" />
+                                                            <span className="text-[10px] text-slate-500 font-mono truncate">{ip}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* Site / Origin */}
+                                                <div className="flex flex-col justify-center gap-1 min-w-0">
+                                                    {siteName ? (
+                                                        <div className="flex items-center gap-1.5">
+                                                            <Globe size={11} className="text-blue-400 shrink-0" />
+                                                            <span className="text-xs text-blue-300 truncate">{siteName}</span>
+                                                        </div>
+                                                    ) : null}
+                                                    {host ? (
+                                                        <div className="flex items-center gap-1.5">
+                                                            <ExternalLink size={10} className="text-slate-500 shrink-0" />
+                                                            <span className="text-[10px] text-slate-500 truncate">{host}</span>
+                                                        </div>
+                                                    ) : (
+                                                        !siteName && <span className="text-xs text-slate-600 italic">—</span>
+                                                    )}
+                                                </div>
+
+                                                {/* Status */}
+                                                <div className="flex items-center">
+                                                    <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg ${session.status === 'human'
+                                                        ? 'bg-orange-500/15 text-orange-400 border border-orange-500/20'
+                                                        : 'bg-green-500/15 text-green-400 border border-green-500/20'
+                                                        }`}>
+                                                        <span className={`w-1.5 h-1.5 rounded-full ${session.status === 'human' ? 'bg-orange-400' : 'bg-green-400'}`} />
+                                                        {session.status === 'human' ? 'Human' : 'AI'}
+                                                    </span>
+                                                </div>
+
+                                                {/* Last Active */}
+                                                <div className="flex items-center">
+                                                    <span className="text-xs text-slate-400">
+                                                        {session.last_message_at
+                                                            ? format(new Date(session.last_message_at), 'MMM d, HH:mm')
+                                                            : <span className="text-slate-600">—</span>}
+                                                    </span>
+                                                </div>
+
+                                                {/* Started */}
+                                                <div className="flex items-center">
+                                                    <span className="text-xs text-slate-500">
+                                                        {session.created_at
+                                                            ? format(new Date(session.created_at), 'MMM d')
+                                                            : '—'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Footer */}
+                                {filteredUsers.length > 0 && (
+                                    <div className="px-5 py-3 border-t border-white/5 bg-slate-900/20 flex items-center justify-between">
+                                        <p className="text-[11px] text-slate-500">
+                                            Showing <span className="text-slate-300 font-semibold">{filteredUsers.length}</span> of <span className="text-slate-300 font-semibold">{sessions.length}</span> users
+                                        </p>
+                                        <p className="text-[11px] text-slate-600">Click any row to open chat</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                 )}
 
                 {/* Analytics Page View */}

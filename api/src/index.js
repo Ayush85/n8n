@@ -3,6 +3,8 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import helmet from 'helmet';
+import { rateLimit } from 'express-rate-limit';
 import pg from 'pg';
 import OpenAI from 'openai';
 import logger from './config/logger.js';
@@ -16,8 +18,89 @@ const openai = new OpenAI({
 const { Pool } = pg;
 
 const app = express();
-app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
-app.use(express.json({ limit: '1mb' }));
+
+// ── Security headers ────────────────────────────────────────────────────────
+app.use(helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' }, // allow widget JS to be embedded
+    contentSecurityPolicy: false, // managed by nginx/reverse proxy
+}));
+
+// ── CORS ──────────────────────────────────────────────────────────────────
+const allowedOrigins = (process.env.CORS_ORIGIN || '*')
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean);
+
+app.use(cors({
+    origin: (origin, callback) => {
+        // Allow requests with no origin (curl, mobile apps, same-origin)
+        if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        logger.warn(`CORS blocked: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+}));
+
+app.use(express.json({ limit: '50kb' })); // tightened from 1mb
+
+// ── Rate limiters (all values from .env) ─────────────────────────────────
+const windowMs = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000');  // 15 min
+const generalMax = parseInt(process.env.RATE_LIMIT_GENERAL_MAX || '100');
+const chatMax = parseInt(process.env.RATE_LIMIT_CHAT_MAX || '30');
+const chatWindow = parseInt(process.env.RATE_LIMIT_CHAT_WINDOW_MS || '60000'); // 1 min
+const adminMax = parseInt(process.env.RATE_LIMIT_ADMIN_MAX || '200');
+
+const generalLimiter = rateLimit({
+    windowMs,
+    max: generalMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please try again later.' },
+});
+
+const chatLimiter = rateLimit({
+    windowMs: chatWindow,
+    max: chatMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many messages, please slow down.' },
+});
+
+const adminLimiter = rateLimit({
+    windowMs,
+    max: adminMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests.' },
+});
+
+app.use(generalLimiter);
+
+// ── Admin bearer-token auth ───────────────────────────────────────────────
+const ADMIN_SECRET = process.env.ADMIN_SECRET || '';
+
+function adminAuth(req, res, next) {
+    if (!ADMIN_SECRET) return next(); // if not set, skip (dev convenience)
+    const auth = req.headers['authorization'] || '';
+    if (auth === `Bearer ${ADMIN_SECRET}`) return next();
+    logger.warn(`Unauthorized admin access attempt from ${req.ip}`);
+    return res.status(401).json({ error: 'Unauthorized' });
+}
+
+// Dynamic widget config — only safe public vars; webhook URL is NOT exposed
+app.get('/widget/config.js', (req, res) => {
+    const apiUrl = process.env.VITE_API_URL || `http://localhost:${process.env.API_PORT || 3001}`;
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send([
+        '// Auto-generated — do not edit manually',
+        `window.N8N_CHAT_API_URL   = ${JSON.stringify(apiUrl)};`,
+        `window.N8N_CHAT_CLIENT_ID = ${JSON.stringify(process.env.N8N_CLIENT_ID || 'client_1')};`,
+        `window.N8N_CHAT_SITE_NAME = ${JSON.stringify(process.env.N8N_SITE_NAME || 'Fatafat Sewa')};`,
+    ].join('\n'));
+});
 
 // Serve widget files
 app.use('/widget', express.static('widget'));
@@ -25,9 +108,10 @@ app.use('/widget', express.static('widget'));
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
+        origin: allowedOrigins.includes('*') ? '*' : allowedOrigins,
+        methods: ['GET', 'POST'],
+        credentials: true,
+    },
 });
 
 // Database setup with Supabase-optimized pool configuration
@@ -166,7 +250,7 @@ function isHumanHandoffRequest(message) {
 }
 
 // Proxy endpoint for n8n AI chat (avoids CORS issues)
-app.post('/api/chat', async (req, res, next) => {
+app.post('/api/chat', chatLimiter, async (req, res, next) => {
     try {
         const { action, sessionId, chatInput, metadata } = req.body;
 
@@ -258,7 +342,7 @@ app.post('/api/chat', async (req, res, next) => {
 });
 
 // API endpoint for external inputs (n8n or direct widget)
-app.post('/api/messages', async (req, res, next) => {
+app.post('/api/messages', chatLimiter, async (req, res, next) => {
     try {
         const validatedData = MessageSchema.parse(req.body);
         const { sessionId, sender, content, metadata } = validatedData;
@@ -304,7 +388,7 @@ app.post('/api/messages', async (req, res, next) => {
 });
 
 // Get sessions for dashboard
-app.get('/api/sessions', async (req, res, next) => {
+app.get('/api/sessions', adminLimiter, adminAuth, async (req, res, next) => {
     try {
         const result = await pool.query(`
             SELECT s.*, 
@@ -320,7 +404,7 @@ app.get('/api/sessions', async (req, res, next) => {
 });
 
 // Get messages for a session
-app.get('/api/sessions/:sessionId/messages', async (req, res, next) => {
+app.get('/api/sessions/:sessionId/messages', adminLimiter, adminAuth, async (req, res, next) => {
     const { sessionId } = req.params;
     try {
         const result = await pool.query(
@@ -334,7 +418,7 @@ app.get('/api/sessions/:sessionId/messages', async (req, res, next) => {
 });
 
 // Get single session by ID
-app.get('/api/sessions/:sessionId', async (req, res, next) => {
+app.get('/api/sessions/:sessionId', adminLimiter, adminAuth, async (req, res, next) => {
     const { sessionId } = req.params;
     try {
         const result = await pool.query(
@@ -350,8 +434,8 @@ app.get('/api/sessions/:sessionId', async (req, res, next) => {
     }
 });
 
-// Update session status
-app.put('/api/sessions/:sessionId/status', async (req, res, next) => {
+// Update session status  
+app.put('/api/sessions/:sessionId/status', adminLimiter, adminAuth, async (req, res, next) => {
     const { sessionId } = req.params;
     const { status } = req.body;
 
@@ -431,7 +515,7 @@ app.get('/api/sessions/by-contact/:contact', async (req, res, next) => {
 // ============================================
 
 // Get overall analytics
-app.get('/api/analytics', async (req, res, next) => {
+app.get('/api/analytics', adminLimiter, adminAuth, async (req, res, next) => {
     try {
         // Total sessions
         const totalSessions = await pool.query('SELECT COUNT(*) as count FROM sessions');
@@ -521,7 +605,7 @@ app.get('/api/analytics', async (req, res, next) => {
 });
 
 // GPT-powered session summary
-app.get('/api/sessions/:sessionId/summary', async (req, res, next) => {
+app.get('/api/sessions/:sessionId/summary', adminLimiter, adminAuth, async (req, res, next) => {
     const { sessionId } = req.params;
 
     // Guard: Check if OpenAI API key is configured
@@ -647,7 +731,7 @@ Return ONLY valid JSON, no other text.`
 });
 
 // GPT-powered chat report across multiple sessions
-app.post('/api/reports/chat', async (req, res, next) => {
+app.post('/api/reports/chat', adminLimiter, adminAuth, async (req, res, next) => {
     // Guard: Check if OpenAI API key is configured
     if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.startsWith('sk-your')) {
         return res.status(503).json({ error: 'OpenAI API key not configured. Please set OPENAI_API_KEY in your .env file.' });
