@@ -317,8 +317,6 @@ app.post('/api/chat', async (req, res, next) => {
 
         // Forward request to n8n webhook
 
-        logger.info(`Proxying chat request to n8n for session ${sessionId}`);
-
         // Forward request to n8n webhook
         const response = await fetch(N8N_WEBHOOK_URL, {
             method: 'POST',

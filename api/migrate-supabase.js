@@ -33,6 +33,11 @@ async function migrate() {
                 session_id  TEXT PRIMARY KEY,
                 customer_name TEXT,
                 user_contact  TEXT,
+                user_id       INTEGER,
+                user_email    TEXT,
+                user_phone    TEXT,
+                is_active     BOOLEAN DEFAULT true,
+                title         VARCHAR(100),
                 status        TEXT DEFAULT 'ai',
                 summary       TEXT,
                 metadata      JSONB DEFAULT '{}',
@@ -56,6 +61,58 @@ async function migrate() {
         `);
         console.log('✅ user_contact column verified');
 
+        await pool.query(`
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'sessions' AND column_name = 'user_id'
+                ) THEN
+                    ALTER TABLE sessions ADD COLUMN user_id INTEGER;
+                END IF;
+            END $$;
+        `);
+        console.log('✅ user_id column verified');
+
+        await pool.query(`
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'sessions' AND column_name = 'user_email'
+                ) THEN
+                    ALTER TABLE sessions ADD COLUMN user_email TEXT;
+                END IF;
+            END $$;
+        `);
+        console.log('✅ user_email column verified');
+
+        await pool.query(`
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'sessions' AND column_name = 'user_phone'
+                ) THEN
+                    ALTER TABLE sessions ADD COLUMN user_phone TEXT;
+                END IF;
+            END $$;
+        `);
+        console.log('✅ user_phone column verified');
+
+        await pool.query(`
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'sessions' AND column_name = 'is_active'
+                ) THEN
+                    ALTER TABLE sessions ADD COLUMN is_active BOOLEAN DEFAULT true;
+                END IF;
+            END $$;
+        `);
+        console.log('✅ is_active column verified');
+
         // Safely add title column for multi-session chat
         await pool.query(`
             DO $$
@@ -71,7 +128,22 @@ async function migrate() {
         console.log('✅ title column verified');
 
         // --------------------------------------------------------
-        // 2. MESSAGES TABLE
+        // 2. USERS TABLE
+        // --------------------------------------------------------
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id            SERIAL PRIMARY KEY,
+                email         TEXT UNIQUE,
+                phone         TEXT UNIQUE,
+                name          TEXT,
+                created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                last_login_at TIMESTAMPTZ
+            );
+        `);
+        console.log('✅ Users table created/verified');
+
+        // --------------------------------------------------------
+        // 3. MESSAGES TABLE
         // --------------------------------------------------------
         await pool.query(`
             CREATE TABLE IF NOT EXISTS messages (
@@ -85,7 +157,7 @@ async function migrate() {
         console.log('✅ Messages table created/verified');
 
         // --------------------------------------------------------
-        // 3. PRODUCTS TABLE
+        // 4. PRODUCTS TABLE
         // --------------------------------------------------------
         await pool.query(`
             CREATE TABLE IF NOT EXISTS products (
@@ -124,8 +196,18 @@ async function migrate() {
         `);
         console.log('✅ Products table created/verified');
 
+        // Final safety pass: ensure required session columns exist before indexing.
+        // This protects older databases where prior conditional blocks may not have applied.
+        await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_contact TEXT`);
+        await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id INTEGER`);
+        await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_email TEXT`);
+        await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_phone TEXT`);
+        await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true`);
+        await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title VARCHAR(100)`);
+        console.log('✅ Final sessions column safety pass complete');
+
         // --------------------------------------------------------
-        // 4. INDEXES
+        // 5. INDEXES
         // --------------------------------------------------------
         const indexes = [
             // Messages
@@ -135,6 +217,11 @@ async function migrate() {
             `CREATE INDEX IF NOT EXISTS idx_sessions_user_contact ON sessions(user_contact)`,
             `CREATE INDEX IF NOT EXISTS idx_sessions_status       ON sessions(status)`,
             `CREATE INDEX IF NOT EXISTS idx_sessions_updated_at   ON sessions(updated_at)`,
+            `CREATE INDEX IF NOT EXISTS idx_sessions_user_id      ON sessions(user_id)` ,
+            `CREATE INDEX IF NOT EXISTS idx_sessions_is_active    ON sessions(is_active)` ,
+            // Users
+            `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)` ,
+            `CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone)` ,
             // Products
             `CREATE INDEX IF NOT EXISTS idx_products_slug  ON products(slug)`,
             `CREATE INDEX IF NOT EXISTS idx_products_name  ON products(name)`,
