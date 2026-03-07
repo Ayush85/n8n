@@ -5,6 +5,10 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import pg from 'pg';
 import OpenAI from 'openai';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import multer from 'multer';
+import path from 'path';
+import crypto from 'crypto';
 import logger from './config/logger.js';
 import { MessageSchema } from './schemas/chat.js';
 
@@ -59,6 +63,106 @@ pool.on('error', (err) => {
 // Health check
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ============================================
+// FILE UPLOAD — DigitalOcean Spaces
+// ============================================
+const s3Client = new S3Client({
+    endpoint: process.env.DO_SPACES_ENDPOINT || 'https://sgp1.digitaloceanspaces.com',
+    region: process.env.DO_SPACES_REGION || 'sgp1',
+    credentials: {
+        accessKeyId: process.env.DO_SPACES_KEY || '',
+        secretAccessKey: process.env.DO_SPACES_SECRET || ''
+    },
+    forcePathStyle: false
+});
+
+const ALLOWED_MIME_TYPES = [
+    'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+    'application/pdf',
+    'text/plain',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+];
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+    fileFilter: (req, file, cb) => {
+        if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error(`File type not allowed: ${file.mimetype}`));
+        }
+    }
+});
+
+// POST /api/upload  — upload a file to DO Spaces and save message
+app.post('/api/upload', upload.single('file'), async (req, res, next) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file provided' });
+        }
+
+        const sessionId = req.body.sessionId || 'unknown';
+        const folder = process.env.DO_SPACES_FOLDER || 'chatApp';
+        const bucket = process.env.DO_SPACES_BUCKET || 'aydexis';
+        const region = process.env.DO_SPACES_REGION || 'sgp1';
+        const ext = path.extname(req.file.originalname).toLowerCase();
+        const uniqueName = `${crypto.randomUUID()}${ext}`;
+        const key = `${folder}/${sessionId}/${uniqueName}`;
+
+        await s3Client.send(new PutObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            Body: req.file.buffer,
+            ContentType: req.file.mimetype,
+            ACL: 'public-read'
+        }));
+
+        const fileUrl = `https://${bucket}.${region}.digitaloceanspaces.com/${key}`;
+
+        logger.info(`File uploaded to Spaces: ${fileUrl}`);
+
+        // Save file message to DB so it appears in both chat and dashboard
+        const filePayload = JSON.stringify({
+            fileUrl,
+            fileName: req.file.originalname,
+            fileType: req.file.mimetype,
+            fileSize: req.file.size
+        });
+
+        // Ensure session exists
+        await pool.query(
+            `INSERT INTO sessions (session_id, status, metadata)
+             VALUES ($1, 'ai', '{}')
+             ON CONFLICT (session_id) DO UPDATE SET updated_at = NOW()`,
+            [sessionId]
+        );
+
+        // Save message
+        await pool.query(
+            'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
+            [sessionId, 'user', filePayload]
+        );
+
+        // Broadcast via socket
+        io.to(sessionId).emit('new_message', {
+            sessionId,
+            sender: 'user',
+            content: filePayload,
+            timestamp: new Date()
+        });
+        io.emit('session_update', { sessionId, lastMessage: `📎 ${req.file.originalname}` });
+
+        res.json({ success: true, fileUrl, fileName: req.file.originalname, fileType: req.file.mimetype, fileSize: req.file.size });
+    } catch (error) {
+        logger.error('File upload error:', error);
+        next(error);
+    }
 });
 
 // N8N Webhook URL (from environment or default)
@@ -544,21 +648,23 @@ app.get('/api/sessions/by-contact/:contact', async (req, res, next) => {
     const { contact } = req.params;
     try {
         const result = await pool.query(
-            `SELECT session_id, customer_name, user_contact, status, created_at, updated_at
-             FROM sessions 
-             WHERE user_contact = $1 
-             ORDER BY updated_at DESC 
-             LIMIT 1`,
+            `SELECT s.session_id, s.customer_name, s.user_contact, s.status,
+                    s.created_at, s.updated_at,
+                    (SELECT content FROM messages m WHERE m.session_id = s.session_id ORDER BY m.created_at ASC LIMIT 1) AS first_message,
+                    (SELECT created_at FROM messages m WHERE m.session_id = s.session_id ORDER BY m.created_at DESC LIMIT 1) AS last_message_at
+             FROM sessions s
+             WHERE s.user_contact = $1
+             ORDER BY s.updated_at DESC`,
             [contact]
         );
 
         if (result.rows.length === 0) {
-            logger.info(`No existing session found for contact: ${contact}`);
-            return res.json({ found: false });
+            logger.info(`No existing sessions found for contact: ${contact}`);
+            return res.json({ found: false, sessions: [] });
         }
 
-        logger.info(`Found existing session for contact ${contact}: ${result.rows[0].session_id}`);
-        res.json({ found: true, session: result.rows[0] });
+        logger.info(`Found ${result.rows.length} session(s) for contact ${contact}`);
+        res.json({ found: true, sessions: result.rows, session: result.rows[0] });
     } catch (error) {
         next(error);
     }

@@ -55,6 +55,16 @@ const adminFetch = (url, options = {}) => {
     return fetch(url, { ...options, headers });
 };
 
+// Helper: parse a file-message payload from a message content string
+function parseFileMsg(content) {
+    try {
+        const p = JSON.parse(content);
+        return (p && typeof p.fileUrl === 'string') ? p : null;
+    } catch {
+        return null;
+    }
+}
+
 function App() {
     const [sessions, setSessions] = useState([]);
     const [activeSession, setActiveSession] = useState(null);
@@ -76,6 +86,10 @@ function App() {
     const [userSearch, setUserSearch] = useState('');
     const [userSortField, setUserSortField] = useState('updated_at');
     const [userSortDir, setUserSortDir] = useState('desc');
+    const [expandedChatUsers, setExpandedChatUsers] = useState(new Set());
+    const [expandedUserRows, setExpandedUserRows] = useState(new Set());
+    const [expandedQueryIdx, setExpandedQueryIdx] = useState(null);
+    const [analyticsModal, setAnalyticsModal] = useState(null);
     const messagesEndRef = useRef(null);
 
     // Initialize Socket (only once on mount)
@@ -234,6 +248,17 @@ function App() {
         s.user_contact?.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
+    // Group sessions by user for the chats sidebar
+    const chatUserGroups = filteredSessions.reduce((acc, session) => {
+        const key = session.user_contact || session.customer_name || session.session_id;
+        if (!acc[key]) acc[key] = { key, name: session.customer_name || 'Anonymous', contact: session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone, sessions: [], latestAt: 0, lastMessage: '', latestSession: null };
+        acc[key].sessions.push(session);
+        const t = new Date(session.last_message_at || 0).getTime();
+        if (t > acc[key].latestAt) { acc[key].latestAt = t; acc[key].lastMessage = session.last_message || ''; acc[key].latestSession = session; }
+        return acc;
+    }, {});
+    const sortedChatUserGroups = Object.values(chatUserGroups).sort((a, b) => b.latestAt - a.latestAt);
+
     // Users view: deduplicated list based on sessions (each session = one user entry)
     const filteredUsers = sessions
         .filter(s => {
@@ -247,19 +272,34 @@ function App() {
                 s.metadata?.site_name?.toLowerCase().includes(q) ||
                 s.metadata?.host?.toLowerCase().includes(q)
             );
-        })
-        .sort((a, b) => {
-            let av = a[userSortField] || a.metadata?.[userSortField] || '';
-            let bv = b[userSortField] || b.metadata?.[userSortField] || '';
-            if (userSortField === 'created_at' || userSortField === 'updated_at' || userSortField === 'last_message_at') {
-                av = new Date(av || 0).getTime();
-                bv = new Date(bv || 0).getTime();
-            } else {
-                av = String(av).toLowerCase();
-                bv = String(bv).toLowerCase();
-            }
-            return userSortDir === 'desc' ? (bv > av ? 1 : -1) : (av > bv ? 1 : -1);
         });
+
+    // Group filtered sessions into unique user groups for the Users view
+    const uniqueUserGroups = Object.values(
+        filteredUsers.reduce((acc, session) => {
+            const key = session.user_contact || session.customer_name || session.session_id;
+            if (!acc[key]) acc[key] = { key, name: session.customer_name || 'Anonymous', contact: session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone, sessions: [], latestAt: 0, earliestAt: Infinity, latestSession: null };
+            acc[key].sessions.push(session);
+            const t = new Date(session.last_message_at || 0).getTime();
+            const c = new Date(session.created_at || 0).getTime();
+            if (t > acc[key].latestAt) { acc[key].latestAt = t; acc[key].latestSession = session; }
+            if (c < acc[key].earliestAt) acc[key].earliestAt = c;
+            return acc;
+        }, {})
+    ).sort((a, b) => {
+        const aS = a.latestSession || a.sessions[0];
+        const bS = b.latestSession || b.sessions[0];
+        let av = aS?.[userSortField] || aS?.metadata?.[userSortField] || '';
+        let bv = bS?.[userSortField] || bS?.metadata?.[userSortField] || '';
+        if (userSortField === 'created_at' || userSortField === 'updated_at' || userSortField === 'last_message_at') {
+            av = new Date(av || 0).getTime();
+            bv = new Date(bv || 0).getTime();
+        } else { av = String(av).toLowerCase(); bv = String(bv).toLowerCase(); }
+        return userSortDir === 'desc' ? (bv > av ? 1 : -1) : (av > bv ? 1 : -1);
+    });
+
+    // Count total unique users across all sessions (unfiltered)
+    const totalUniqueUsers = Object.keys(sessions.reduce((acc, s) => { acc[s.user_contact || s.customer_name || s.session_id] = true; return acc; }, {})).length;
 
     const toggleUserSort = (field) => {
         if (userSortField === field) {
@@ -328,7 +368,7 @@ function App() {
                             <Users size={15} />
                             Users
                             <span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-md ${currentView === 'users' ? 'bg-white/20 text-white' : 'bg-white/10 text-slate-400'}`}>
-                                {sessions.length}
+                                {totalUniqueUsers}
                             </span>
                         </button>
                     </div>
@@ -352,46 +392,105 @@ function App() {
                         <div className="px-3 mb-2">
                             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Active Chats</span>
                         </div>
-                        {filteredSessions.map(session => (
-                            <button
-                                key={session.session_id}
-                                onClick={() => { setActiveSession(session); if (window.innerWidth < 768) setIsSidebarOpen(false); }}
-                                className={`w-full p-4  flex gap-4 rounded-2xl transition-all duration-200 group relative ${activeSession?.session_id === session.session_id ? 'bg-blue-600/10 border border-blue-500/20' : 'hover:bg-white/5 border border-transparent'}`}
-                            >
-                                <div className="relative shrink-0">
-                                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border border-white/10 flex items-center justify-center text-slate-400 group-hover:text-blue-400 transition-colors overflow-hidden">
-                                        <User className="w-6 h-6" />
-                                    </div>
-                                    {/* Dynamic status based on last activity (within 5 minutes = online) */}
-                                    {session.last_message_at && (new Date() - new Date(session.last_message_at)) < 300000 ? (
-                                        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-[#020617] rounded-full"></div>
-                                    ) : (
-                                        <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-slate-500 border-2 border-[#020617] rounded-full"></div>
+                        {sortedChatUserGroups.map(group => {
+                            const hasMultiple = group.sessions.length > 1;
+                            const isExpanded = expandedChatUsers.has(group.key);
+                            const rep = group.latestSession || group.sessions[0];
+                            const isOnline = rep.last_message_at && (new Date() - new Date(rep.last_message_at)) < 300000;
+                            const toggleGroup = () => setExpandedChatUsers(prev => { const n = new Set(prev); n.has(group.key) ? n.delete(group.key) : n.add(group.key); return n; });
+
+                            if (!hasMultiple) {
+                                const session = group.sessions[0];
+                                return (
+                                    <button
+                                        key={session.session_id}
+                                        onClick={() => { setActiveSession(session); if (window.innerWidth < 768) setIsSidebarOpen(false); }}
+                                        className={`w-full p-4  flex gap-4 rounded-2xl transition-all duration-200 group relative ${activeSession?.session_id === session.session_id ? 'bg-blue-600/10 border border-blue-500/20' : 'hover:bg-white/5 border border-transparent'}`}
+                                    >
+                                        <div className="relative shrink-0">
+                                            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-slate-800 to-slate-900 border border-white/10 flex items-center justify-center text-slate-400 group-hover:text-blue-400 transition-colors overflow-hidden">
+                                                <User className="w-6 h-6" />
+                                            </div>
+                                            {session.last_message_at && (new Date() - new Date(session.last_message_at)) < 300000 ? (
+                                                <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-2 border-[#020617] rounded-full"></div>
+                                            ) : (
+                                                <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-slate-500 border-2 border-[#020617] rounded-full"></div>
+                                            )}
+                                        </div>
+                                        <div className="flex-1 min-w-0 pr-2">
+                                            <div className="flex justify-between items-center mb-0.5">
+                                                <h3 className="font-semibold truncate text-[14px] text-white tracking-tight">{session.customer_name || 'Anonymous'}</h3>
+                                                <span className="text-[10px] text-slate-500 font-medium">
+                                                    {session.last_message_at ? format(new Date(session.last_message_at), 'HH:mm') : ''}
+                                                </span>
+                                            </div>
+                                            {(session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone) &&
+                                                (session.customer_name !== session.user_contact &&
+                                                    session.customer_name !== (session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone)) && (
+                                                    <p className="text-[11px] text-emerald-400 truncate mb-0.5">
+                                                        📧 {session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone}
+                                                    </p>
+                                                )}
+                                            <p className="text-[12px] text-slate-400 line-clamp-2 opacity-70 leading-relaxed font-light" title={session.last_message || ''}>{session.last_message || 'Started a conversation'}</p>
+                                        </div>
+                                        {activeSession?.session_id === session.session_id && (
+                                            <div className="absolute right-2 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]"></div>
+                                        )}
+                                    </button>
+                                );
+                            }
+
+                            // Multiple sessions — render collapsible user group
+                            return (
+                                <div key={group.key}>
+                                    <button
+                                        onClick={toggleGroup}
+                                        className="w-full p-4 flex gap-4 rounded-2xl transition-all duration-200 group relative hover:bg-white/5 border border-transparent"
+                                    >
+                                        <div className="relative shrink-0">
+                                            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-800 to-slate-900 border border-indigo-500/20 flex items-center justify-center text-indigo-400 overflow-hidden">
+                                                <User className="w-6 h-6" />
+                                            </div>
+                                            <div className={`absolute -bottom-1 -right-1 w-4 h-4 border-2 border-[#020617] rounded-full ${isOnline ? 'bg-green-500' : 'bg-slate-500'}`}></div>
+                                        </div>
+                                        <div className="flex-1 min-w-0 pr-2">
+                                            <div className="flex justify-between items-center mb-0.5">
+                                                <h3 className="font-semibold truncate text-[14px] text-white tracking-tight">{group.name}</h3>
+                                                <div className="flex items-center gap-1.5 shrink-0">
+                                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-500/20 text-indigo-400">{group.sessions.length}</span>
+                                                    <ChevronRight size={13} className={`text-slate-500 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
+                                                </div>
+                                            </div>
+                                            {group.contact && group.name !== group.contact && (
+                                                <p className="text-[11px] text-emerald-400 truncate mb-0.5">📧 {group.contact}</p>
+                                            )}
+                                            <p className="text-[12px] text-slate-400 line-clamp-2 opacity-70 leading-relaxed font-light" title={group.lastMessage || ''}>{group.lastMessage || 'Started a conversation'}</p>
+                                        </div>
+                                    </button>
+                                    {isExpanded && (
+                                        <div className="ml-4 pl-4 border-l border-indigo-500/20 space-y-0.5 mb-1">
+                                            {[...group.sessions].sort((a, b) => new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0)).map((session, idx) => (
+                                                <button
+                                                    key={session.session_id}
+                                                    onClick={() => { setActiveSession(session); if (window.innerWidth < 768) setIsSidebarOpen(false); }}
+                                                    className={`w-full px-3 py-2.5 flex gap-3 rounded-xl transition-all duration-150 text-left ${activeSession?.session_id === session.session_id ? 'bg-blue-600/10 border border-blue-500/20' : 'hover:bg-white/5 border border-transparent'}`}
+                                                >
+                                                    <span className="text-[10px] text-slate-600 font-mono mt-0.5 shrink-0">#{idx + 1}</span>
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-xs text-slate-300 line-clamp-2" title={session.last_message || ''}>{session.last_message || 'Started a conversation'}</p>
+                                                        <p className="text-[10px] text-slate-500">{session.last_message_at ? format(new Date(session.last_message_at), 'MMM d, HH:mm') : ''}</p>
+                                                    </div>
+                                                    {activeSession?.session_id === session.session_id && (
+                                                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0 mt-1 shadow-[0_0_6px_rgba(59,130,246,0.8)]"></div>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
                                     )}
                                 </div>
-                                <div className="flex-1 min-w-0 pr-2">
-                                    <div className="flex justify-between items-center mb-0.5">
-                                        <h3 className="font-semibold truncate text-[14px] text-white tracking-tight">{session.customer_name || 'Anonymous'}</h3>
-                                        <span className="text-[10px] text-slate-500 font-medium">
-                                            {session.last_message_at ? format(new Date(session.last_message_at), 'HH:mm') : ''}
-                                        </span>
-                                    </div>
-                                    {/* Show user contact only if it's different from customer name */}
-                                    {(session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone) &&
-                                        (session.customer_name !== session.user_contact &&
-                                            session.customer_name !== (session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone)) && (
-                                            <p className="text-[11px] text-emerald-400 truncate mb-0.5">
-                                                📧 {session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone}
-                                            </p>
-                                        )}
-                                    <p className="text-[12px] text-slate-400 truncate opacity-70 leading-relaxed font-light">{session.last_message || 'Started a conversation'}</p>
-                                </div>
-                                {activeSession?.session_id === session.session_id && (
-                                    <div className="absolute right-2 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]"></div>
-                                )}
-                            </button>
-                        ))}
-                        {filteredSessions.length === 0 && (
+                            );
+                        })}
+                        {sortedChatUserGroups.length === 0 && (
                             <div className="p-8 text-center mt-10">
                                 <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 border border-white/5">
                                     <Search className="text-slate-600" size={20} />
@@ -479,7 +578,7 @@ function App() {
                                 </div>
                                 <div>
                                     <h2 className="font-bold text-[17px] text-white tracking-tight">Chat Users</h2>
-                                    <p className="text-[10px] text-slate-400 mt-0.5">{sessions.length} total users across all sessions</p>
+                                    <p className="text-[10px] text-slate-400 mt-0.5">{totalUniqueUsers} unique users · {sessions.length} total sessions</p>
                                 </div>
                             </div>
                             <div className="flex items-center gap-3">
@@ -513,16 +612,16 @@ function App() {
                                         </div>
                                         <span className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">Total Users</span>
                                     </div>
-                                    <p className="text-2xl font-bold text-white">{sessions.length}</p>
+                                    <p className="text-2xl font-bold text-white">{totalUniqueUsers}</p>
                                 </div>
                                 <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-4">
                                     <div className="flex items-center gap-2 mb-2">
-                                        <div className="w-8 h-8 rounded-lg bg-blue-600/20 flex items-center justify-center">
-                                            <Mail size={16} className="text-blue-400" />
+                                        <div className="w-8 h-8 rounded-lg bg-purple-600/20 flex items-center justify-center">
+                                            <MessageSquare size={16} className="text-purple-400" />
                                         </div>
-                                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">With Contact</span>
+                                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-medium">Total Sessions</span>
                                     </div>
-                                    <p className="text-2xl font-bold text-white">{sessions.filter(s => s.user_contact).length}</p>
+                                    <p className="text-2xl font-bold text-white">{sessions.length}</p>
                                 </div>
                                 <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-4">
                                     <div className="flex items-center gap-2 mb-2">
@@ -573,7 +672,7 @@ function App() {
 
                                 {/* Table Rows */}
                                 <div className="divide-y divide-white/[0.03]">
-                                    {filteredUsers.length === 0 ? (
+                                    {uniqueUserGroups.length === 0 ? (
                                         <div className="flex flex-col items-center justify-center py-16">
                                             <div className="w-14 h-14 bg-white/5 rounded-full flex items-center justify-center mb-4 border border-white/5">
                                                 <Users className="text-slate-600" size={24} />
@@ -581,126 +680,162 @@ function App() {
                                             <p className="text-sm text-slate-500 font-medium">No users found</p>
                                             <p className="text-xs text-slate-600 mt-1">Try adjusting your search</p>
                                         </div>
-                                    ) : filteredUsers.map((session) => {
-                                        const contact = session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone;
+                                    ) : uniqueUserGroups.map((group) => {
+                                        const session = group.latestSession || group.sessions[0];
+                                        const contact = group.contact;
                                         const ip = session.metadata?.ip_address;
                                         const siteName = session.metadata?.site_name;
                                         const host = session.metadata?.host;
                                         const isOnline = session.last_message_at && (new Date() - new Date(session.last_message_at)) < 300000;
+                                        const isExpanded = expandedUserRows.has(group.key);
+                                        const hasMultiple = group.sessions.length > 1;
                                         return (
-                                            <div
-                                                key={session.session_id}
-                                                className="grid grid-cols-[1fr_1fr_120px_60px_100px_120px_90px] gap-4 px-5 py-3.5 border-b border-white/5 hover:bg-white/3 transition-colors cursor-pointer items-start"
-                                                onClick={() => { setActiveSession(session); setCurrentView('chats'); }}
-                                            >
-                                                {/* User */}
-                                                <div className="flex items-center gap-3 min-w-0">
-                                                    <div className="relative shrink-0">
-                                                        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-slate-700 to-slate-800 border border-white/10 flex items-center justify-center text-slate-300">
-                                                            <User size={16} />
+                                            <React.Fragment key={group.key}>
+                                                {/* User group row */}
+                                                <div
+                                                    className="grid grid-cols-[1fr_1fr_120px_60px_100px_120px_90px] gap-4 px-5 py-3.5 hover:bg-white/[0.03] transition-colors cursor-pointer items-start"
+                                                    onClick={() => { setActiveSession(session); setCurrentView('chats'); }}
+                                                >
+                                                    {/* User */}
+                                                    <div className="flex items-center gap-3 min-w-0">
+                                                        <div className="relative shrink-0">
+                                                            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-slate-700 to-slate-800 border border-white/10 flex items-center justify-center text-slate-300">
+                                                                <User size={16} />
+                                                            </div>
+                                                            <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#020617] ${isOnline ? 'bg-green-500' : 'bg-slate-500'}`} />
                                                         </div>
-                                                        <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#020617] ${isOnline ? 'bg-green-500' : 'bg-slate-500'}`} />
+                                                        <div className="min-w-0">
+                                                            <p className="text-sm font-semibold text-white truncate">
+                                                                {group.name !== 'Anonymous' ? group.name : <span className="text-slate-500 italic font-normal">Anonymous</span>}
+                                                            </p>
+                                                            <p className="text-[10px] text-slate-600 font-mono truncate">{session.session_id.slice(0, 20)}…</p>
+                                                        </div>
                                                     </div>
-                                                    <div className="min-w-0">
-                                                        <p className="text-sm font-semibold text-white truncate group-hover:text-emerald-400 transition-colors">
-                                                            {session.customer_name || <span className="text-slate-500 italic font-normal">Anonymous</span>}
-                                                        </p>
-                                                        <p className="text-[10px] text-slate-600 font-mono truncate">{session.session_id.slice(0, 20)}…</p>
+
+                                                    {/* Contact / IP */}
+                                                    <div className="flex flex-col justify-center gap-1 min-w-0">
+                                                        {contact ? (
+                                                            <div className="flex items-center gap-1.5">
+                                                                <Mail size={11} className="text-emerald-400 shrink-0" />
+                                                                <span className="text-xs text-emerald-300 truncate">{contact}</span>
+                                                            </div>
+                                                        ) : (
+                                                            <span className="text-xs text-slate-600 italic">No contact</span>
+                                                        )}
+                                                        {ip && (
+                                                            <div className="flex items-center gap-1.5">
+                                                                <MapPin size={10} className="text-slate-500 shrink-0" />
+                                                                <span className="text-[10px] text-slate-500 font-mono truncate">{ip}</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Site / Origin */}
+                                                    <div className="flex flex-col justify-center gap-1 min-w-0">
+                                                        {siteName ? (
+                                                            <div className="flex items-center gap-1.5">
+                                                                <Globe size={11} className="text-blue-400 shrink-0" />
+                                                                <span className="text-xs text-blue-300 truncate">{siteName}</span>
+                                                            </div>
+                                                        ) : null}
+                                                        {host ? (
+                                                            <div className="flex items-center gap-1.5">
+                                                                <ExternalLink size={10} className="text-slate-500 shrink-0" />
+                                                                <span className="text-[10px] text-slate-500 truncate">{host}</span>
+                                                            </div>
+                                                        ) : (
+                                                            !siteName && <span className="text-xs text-slate-600 italic">—</span>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Sessions count with expand toggle */}
+                                                    <div className="flex items-center">
+                                                        <button
+                                                            onClick={e => { e.stopPropagation(); if (hasMultiple) setExpandedUserRows(prev => { const n = new Set(prev); n.has(group.key) ? n.delete(group.key) : n.add(group.key); return n; }); }}
+                                                            className={`inline-flex items-center gap-1 h-7 px-2 rounded-lg text-xs font-bold border transition-colors ${hasMultiple ? 'bg-blue-500/15 text-blue-400 border-blue-500/20 hover:bg-blue-500/25 cursor-pointer' : 'bg-slate-700/50 text-slate-400 border-transparent cursor-default'}`}
+                                                            title={hasMultiple ? (isExpanded ? 'Collapse sessions' : 'Expand sessions') : '1 session'}
+                                                        >
+                                                            {group.sessions.length}
+                                                            {hasMultiple && <ChevronRight size={11} className={`transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`} />}
+                                                        </button>
+                                                    </div>
+
+                                                    {/* Status */}
+                                                    <div className="flex items-center">
+                                                        <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg ${session.status === 'human'
+                                                            ? 'bg-orange-500/15 text-orange-400 border border-orange-500/20'
+                                                            : 'bg-green-500/15 text-green-400 border border-green-500/20'
+                                                            }`}>
+                                                            <span className={`w-1.5 h-1.5 rounded-full ${session.status === 'human' ? 'bg-orange-400' : 'bg-green-400'}`} />
+                                                            {session.status === 'human' ? 'Human' : 'AI'}
+                                                        </span>
+                                                    </div>
+
+                                                    {/* Last Active */}
+                                                    <div className="flex items-center">
+                                                        <span className="text-xs text-slate-400">
+                                                            {session.last_message_at
+                                                                ? format(new Date(session.last_message_at), 'MMM d, HH:mm')
+                                                                : <span className="text-slate-600">—</span>}
+                                                        </span>
+                                                    </div>
+
+                                                    {/* Started (earliest session) */}
+                                                    <div className="flex items-center">
+                                                        <span className="text-xs text-slate-500">
+                                                            {group.earliestAt && isFinite(group.earliestAt)
+                                                                ? format(new Date(group.earliestAt), 'MMM d')
+                                                                : '—'}
+                                                        </span>
                                                     </div>
                                                 </div>
 
-                                                {/* Contact / IP */}
-                                                <div className="flex flex-col justify-center gap-1 min-w-0">
-                                                    {contact ? (
-                                                        <div className="flex items-center gap-1.5">
-                                                            <Mail size={11} className="text-emerald-400 shrink-0" />
-                                                            <span className="text-xs text-emerald-300 truncate">{contact}</span>
+                                                {/* Expanded sub-sessions */}
+                                                {isExpanded && hasMultiple && [...group.sessions]
+                                                    .sort((a, b) => new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0))
+                                                    .map((sub, idx) => (
+                                                        <div
+                                                            key={sub.session_id}
+                                                            className="grid grid-cols-[1fr_1fr_120px_60px_100px_120px_90px] gap-4 pl-10 pr-5 py-2.5 bg-slate-900/30 hover:bg-white/[0.02] border-l-2 border-indigo-500/20 cursor-pointer transition-colors items-center"
+                                                            onClick={() => { setActiveSession(sub); setCurrentView('chats'); }}
+                                                        >
+                                                            <div className="flex items-center gap-2 min-w-0">
+                                                                <span className="text-[10px] text-slate-600 font-mono shrink-0">#{idx + 1}</span>
+                                                                <span className="text-[10px] text-slate-500 font-mono truncate">{sub.session_id.slice(0, 24)}…</span>
+                                                            </div>
+                                                            <div className="col-span-2 min-w-0">
+                                                                <p className="text-xs text-slate-400 line-clamp-2" title={sub.last_message || ''}>{sub.last_message || 'Started a conversation'}</p>
+                                                            </div>
+                                                            <div></div>
+                                                            <div className="flex items-center">
+                                                                <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md ${sub.status === 'human' ? 'bg-orange-500/10 text-orange-400' : 'bg-green-500/10 text-green-400'}`}>
+                                                                    {sub.status === 'human' ? 'Human' : 'AI'}
+                                                                </span>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-xs text-slate-500">
+                                                                    {sub.last_message_at ? format(new Date(sub.last_message_at), 'MMM d, HH:mm') : '—'}
+                                                                </span>
+                                                            </div>
+                                                            <div>
+                                                                <span className="text-xs text-slate-600">
+                                                                    {sub.created_at ? format(new Date(sub.created_at), 'MMM d') : '—'}
+                                                                </span>
+                                                            </div>
                                                         </div>
-                                                    ) : (
-                                                        <span className="text-xs text-slate-600 italic">No contact</span>
-                                                    )}
-                                                    {ip && (
-                                                        <div className="flex items-center gap-1.5">
-                                                            <MapPin size={10} className="text-slate-500 shrink-0" />
-                                                            <span className="text-[10px] text-slate-500 font-mono truncate">{ip}</span>
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                {/* Site / Origin */}
-                                                <div className="flex flex-col justify-center gap-1 min-w-0">
-                                                    {siteName ? (
-                                                        <div className="flex items-center gap-1.5">
-                                                            <Globe size={11} className="text-blue-400 shrink-0" />
-                                                            <span className="text-xs text-blue-300 truncate">{siteName}</span>
-                                                        </div>
-                                                    ) : null}
-                                                    {host ? (
-                                                        <div className="flex items-center gap-1.5">
-                                                            <ExternalLink size={10} className="text-slate-500 shrink-0" />
-                                                            <span className="text-[10px] text-slate-500 truncate">{host}</span>
-                                                        </div>
-                                                    ) : (
-                                                        !siteName && <span className="text-xs text-slate-600 italic">—</span>
-                                                    )}
-                                                </div>
-
-                                                {/* Status */}
-                                                <div className="flex items-center">
-                                                    {/* Chats count */}
-                                                    {(() => {
-                                                        const contact = session.user_contact;
-                                                        const count = contact
-                                                            ? sessions.filter(s => s.user_contact === contact).length
-                                                            : 1;
-                                                        return (
-                                                            <span className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-blue-500/15 text-blue-400 text-xs font-bold border border-blue-500/20" title={`${count} conversation${count !== 1 ? 's' : ''}`}>
-                                                                {count}
-                                                            </span>
-                                                        );
-                                                    })()}
-                                                </div>
-
-                                                {/* Status */}
-                                                <div className="flex items-center">
-                                                    <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg ${session.status === 'human'
-                                                        ? 'bg-orange-500/15 text-orange-400 border border-orange-500/20'
-                                                        : 'bg-green-500/15 text-green-400 border border-green-500/20'
-                                                        }`}>
-                                                        <span className={`w-1.5 h-1.5 rounded-full ${session.status === 'human' ? 'bg-orange-400' : 'bg-green-400'}`} />
-                                                        {session.status === 'human' ? 'Human' : 'AI'}
-                                                    </span>
-                                                </div>
-
-                                                {/* Last Active */}
-                                                <div className="flex items-center">
-                                                    <span className="text-xs text-slate-400">
-                                                        {session.last_message_at
-                                                            ? format(new Date(session.last_message_at), 'MMM d, HH:mm')
-                                                            : <span className="text-slate-600">—</span>}
-                                                    </span>
-                                                </div>
-
-                                                {/* Started */}
-                                                <div className="flex items-center">
-                                                    <span className="text-xs text-slate-500">
-                                                        {session.created_at
-                                                            ? format(new Date(session.created_at), 'MMM d')
-                                                            : '—'}
-                                                    </span>
-                                                </div>
-                                            </div>
+                                                    ))}
+                                            </React.Fragment>
                                         );
                                     })}
                                 </div>
 
                                 {/* Footer */}
-                                {filteredUsers.length > 0 && (
+                                {uniqueUserGroups.length > 0 && (
                                     <div className="px-5 py-3 border-t border-white/5 bg-slate-900/20 flex items-center justify-between">
                                         <p className="text-[11px] text-slate-500">
-                                            Showing <span className="text-slate-300 font-semibold">{filteredUsers.length}</span> of <span className="text-slate-300 font-semibold">{sessions.length}</span> users
+                                            Showing <span className="text-slate-300 font-semibold">{uniqueUserGroups.length}</span> unique users · <span className="text-slate-300 font-semibold">{filteredUsers.length}</span> sessions
                                         </p>
-                                        <p className="text-[11px] text-slate-600">Click any row to open chat</p>
+                                        <p className="text-[11px] text-slate-600">Click row to open chat · Click count to expand sessions</p>
                                     </div>
                                 )}
                             </div>
@@ -737,45 +872,49 @@ function App() {
                                 <>
                                     {/* Stats Grid */}
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6 md:mb-8">
-                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5">
+                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5 cursor-pointer hover:border-blue-500/30 hover:bg-slate-800/80 transition-all group" onClick={() => setAnalyticsModal('total_sessions')}>
                                             <div className="flex items-center gap-3 mb-3">
                                                 <div className="w-10 h-10 rounded-xl bg-blue-600/20 flex items-center justify-center">
                                                     <Users size={20} className="text-blue-400" />
                                                 </div>
                                                 <span className="text-xs text-slate-400 uppercase tracking-wider font-medium">Total Sessions</span>
+                                                <ChevronRight size={14} className="ml-auto text-slate-600 group-hover:text-blue-400 transition-colors" />
                                             </div>
                                             <p className="text-3xl font-bold text-white">{analytics.totalSessions}</p>
                                             <p className="text-xs text-green-400 mt-1">+{analytics.activeSessions24h} today</p>
                                         </div>
 
-                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5">
+                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5 cursor-pointer hover:border-purple-500/30 hover:bg-slate-800/80 transition-all group" onClick={() => setAnalyticsModal('total_messages')}>
                                             <div className="flex items-center gap-3 mb-3">
                                                 <div className="w-10 h-10 rounded-xl bg-purple-600/20 flex items-center justify-center">
                                                     <MessageCircle size={20} className="text-purple-400" />
                                                 </div>
                                                 <span className="text-xs text-slate-400 uppercase tracking-wider font-medium">Total Messages</span>
+                                                <ChevronRight size={14} className="ml-auto text-slate-600 group-hover:text-purple-400 transition-colors" />
                                             </div>
                                             <p className="text-3xl font-bold text-white">{analytics.totalMessages}</p>
                                             <p className="text-xs text-slate-400 mt-1">~{analytics.avgMessagesPerSession} per session</p>
                                         </div>
 
-                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5">
+                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5 cursor-pointer hover:border-green-500/30 hover:bg-slate-800/80 transition-all group" onClick={() => setAnalyticsModal('active_24h')}>
                                             <div className="flex items-center gap-3 mb-3">
                                                 <div className="w-10 h-10 rounded-xl bg-green-600/20 flex items-center justify-center">
                                                     <Activity size={20} className="text-green-400" />
                                                 </div>
                                                 <span className="text-xs text-slate-400 uppercase tracking-wider font-medium">Active (24h)</span>
+                                                <ChevronRight size={14} className="ml-auto text-slate-600 group-hover:text-green-400 transition-colors" />
                                             </div>
                                             <p className="text-3xl font-bold text-white">{analytics.activeSessions24h}</p>
                                             <p className="text-xs text-slate-400 mt-1">sessions today</p>
                                         </div>
 
-                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5">
+                                        <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-5 cursor-pointer hover:border-orange-500/30 hover:bg-slate-800/80 transition-all group" onClick={() => setAnalyticsModal('avg_response')}>
                                             <div className="flex items-center gap-3 mb-3">
                                                 <div className="w-10 h-10 rounded-xl bg-orange-600/20 flex items-center justify-center">
                                                     <Zap size={20} className="text-orange-400" />
                                                 </div>
                                                 <span className="text-xs text-slate-400 uppercase tracking-wider font-medium">Avg Response</span>
+                                                <ChevronRight size={14} className="ml-auto text-slate-600 group-hover:text-orange-400 transition-colors" />
                                             </div>
                                             <p className="text-3xl font-bold text-white">{Math.round(analytics.avgResponseTimeSeconds || 0)}s</p>
                                             <p className="text-xs text-slate-400 mt-1">response time</p>
@@ -785,10 +924,11 @@ function App() {
                                     {/* Two Column Layout */}
                                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 mb-6">
                                         {/* Messages by Sender */}
-                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
+                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5 cursor-pointer hover:border-blue-500/20 hover:bg-slate-800/60 transition-all group" onClick={() => setAnalyticsModal('messages_by_sender')}>
                                             <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
                                                 <TrendingUp size={16} className="text-blue-400" />
                                                 Messages by Sender
+                                                <ChevronRight size={14} className="ml-auto text-slate-600 group-hover:text-blue-400 transition-colors" />
                                             </h3>
                                             <div className="space-y-3">
                                                 {analytics.messagesBySender?.map((item, idx) => (
@@ -806,10 +946,11 @@ function App() {
                                         </div>
 
                                         {/* Sessions by Status */}
-                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
+                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5 cursor-pointer hover:border-green-500/20 hover:bg-slate-800/60 transition-all group" onClick={() => setAnalyticsModal('sessions_by_status')}>
                                             <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
                                                 <Activity size={16} className="text-green-400" />
                                                 Sessions by Status
+                                                <ChevronRight size={14} className="ml-auto text-slate-600 group-hover:text-green-400 transition-colors" />
                                             </h3>
                                             <div className="space-y-3">
                                                 {analytics.sessionsByStatus?.map((item, idx) => (
@@ -826,10 +967,11 @@ function App() {
                                         </div>
 
                                         {/* Peak Hours */}
-                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
+                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5 cursor-pointer hover:border-orange-500/20 hover:bg-slate-800/60 transition-all group" onClick={() => setAnalyticsModal('peak_hours')}>
                                             <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
                                                 <Clock size={16} className="text-orange-400" />
                                                 Peak Activity Hours
+                                                <ChevronRight size={14} className="ml-auto text-slate-600 group-hover:text-orange-400 transition-colors" />
                                             </h3>
                                             <div className="space-y-2">
                                                 {analytics.peakHours?.map((item, idx) => (
@@ -848,10 +990,11 @@ function App() {
                                         </div>
 
                                         {/* Messages Per Day */}
-                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
+                                        <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5 cursor-pointer hover:border-purple-500/20 hover:bg-slate-800/60 transition-all group" onClick={() => setAnalyticsModal('messages_per_day')}>
                                             <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
                                                 <BarChart3 size={16} className="text-purple-400" />
                                                 Messages (Last 7 Days)
+                                                <ChevronRight size={14} className="ml-auto text-slate-600 group-hover:text-purple-400 transition-colors" />
                                             </h3>
                                             <div className="space-y-2">
                                                 {analytics.messagesPerDay?.slice(0, 7).map((item, idx) => (
@@ -872,20 +1015,35 @@ function App() {
 
                                     {/* Top User Queries Section */}
                                     <div className="bg-slate-800/30 border border-white/5 rounded-2xl p-5">
-                                        <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+                                        <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2 cursor-pointer group" onClick={() => setAnalyticsModal('top_queries')}>
                                             <Hash size={16} className="text-cyan-400" />
                                             Top User Queries & Messages
+                                            <ChevronRight size={14} className="ml-auto text-slate-600 group-hover:text-cyan-400 transition-colors" />
                                         </h3>
                                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-                                            {topQueries.length > 0 ? topQueries.map((item, idx) => (
-                                                <div key={idx} className="bg-slate-900/50 rounded-xl p-3 border border-white/5">
-                                                    <p className="text-sm text-slate-200 line-clamp-2">{item.query}</p>
-                                                    <div className="flex items-center justify-between mt-2">
-                                                        <span className="text-[10px] text-slate-500 uppercase">Frequency</span>
-                                                        <span className="text-xs font-bold text-cyan-400">{item.count}x</span>
+                                            {topQueries.length > 0 ? topQueries.map((item, idx) => {
+                                                const isExpanded = expandedQueryIdx === idx;
+                                                const isLong = item.query?.length > 80;
+                                                return (
+                                                    <div
+                                                        key={idx}
+                                                        className={`bg-slate-900/50 rounded-xl p-3 border border-white/5 transition-colors ${isLong ? 'cursor-pointer hover:border-cyan-500/20 hover:bg-slate-900/80' : ''}`}
+                                                        onClick={() => isLong && setExpandedQueryIdx(isExpanded ? null : idx)}
+                                                        title={isLong && !isExpanded ? item.query : undefined}
+                                                    >
+                                                        <p className={`text-sm text-slate-200 ${isExpanded ? 'whitespace-pre-wrap break-words' : 'line-clamp-2'}`}>{item.query}</p>
+                                                        <div className="flex items-center justify-between mt-2">
+                                                            <span className="text-[10px] text-slate-500 uppercase">Frequency</span>
+                                                            <div className="flex items-center gap-2">
+                                                                {isLong && (
+                                                                    <span className="text-[10px] text-cyan-500/70">{isExpanded ? 'show less ↑' : 'show more ↓'}</span>
+                                                                )}
+                                                                <span className="text-xs font-bold text-cyan-400">{item.count}x</span>
+                                                            </div>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            )) : (
+                                                );
+                                            }) : (
                                                 <p className="text-sm text-slate-500 col-span-3">No queries recorded yet</p>
                                             )}
                                         </div>
@@ -1122,7 +1280,34 @@ function App() {
                                                         ? 'bg-green-900/40 backdrop-blur-md border border-green-500/20 text-slate-100 rounded-tl-none ring-1 ring-green-500/10'
                                                         : 'bg-slate-800/80 backdrop-blur-md border border-white/10 text-slate-100 rounded-tl-none ring-1 ring-white/5'
                                                     }`}>
-                                                    <p className="text-[14px] leading-relaxed font-normal whitespace-pre-wrap">{msg.content}</p>
+                                                    {(() => {
+                                                        const fileData = parseFileMsg(msg.content);
+                                                        if (fileData) {
+                                                            const isImage = fileData.fileType && fileData.fileType.startsWith('image/');
+                                                            return isImage ? (
+                                                                <a href={fileData.fileUrl} target="_blank" rel="noopener noreferrer">
+                                                                    <img
+                                                                        src={fileData.fileUrl}
+                                                                        alt={fileData.fileName || 'image'}
+                                                                        className="max-w-[240px] max-h-[200px] rounded-xl object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                                                                    />
+                                                                </a>
+                                                            ) : (
+                                                                <a
+                                                                    href={fileData.fileUrl}
+                                                                    target="_blank"
+                                                                    rel="noopener noreferrer"
+                                                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 transition-colors text-sm font-medium"
+                                                                >
+                                                                    <Paperclip size={14} />
+                                                                    <span className="max-w-[180px] truncate">{fileData.fileName || 'File'}</span>
+                                                                    {fileData.fileSize && <span className="text-xs opacity-70">{Math.round(fileData.fileSize / 1024)}KB</span>}
+                                                                    <ExternalLink size={12} className="opacity-60" />
+                                                                </a>
+                                                            );
+                                                        }
+                                                        return <p className="text-[14px] leading-relaxed font-normal whitespace-pre-wrap">{msg.content}</p>;
+                                                    })()}
                                                     <div className={`absolute bottom-1 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-500 translate-y-1 group-hover:translate-y-0`}>
                                                         <span className="text-[9px] font-medium text-white/40 font-mono tracking-tighter">
                                                             {format(new Date(msg.created_at || new Date()), 'HH:mm')}
@@ -1417,6 +1602,293 @@ function App() {
                     </div>
                 )}
             </div>
+
+            {/* ── Analytics Detail Modal ── */}
+            {analyticsModal && (
+                <div
+                    className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+                    onClick={() => setAnalyticsModal(null)}
+                >
+                    <div
+                        className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col shadow-2xl"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between p-5 border-b border-white/5 shrink-0">
+                            <h3 className="text-base font-bold text-white">
+                                {analyticsModal === 'total_sessions' && 'All Sessions'}
+                                {analyticsModal === 'total_messages' && 'Message Breakdown'}
+                                {analyticsModal === 'active_24h' && 'Active Sessions (Last 24h)'}
+                                {analyticsModal === 'avg_response' && 'Response Time Details'}
+                                {analyticsModal === 'messages_by_sender' && 'Messages by Sender'}
+                                {analyticsModal === 'sessions_by_status' && 'Sessions by Status'}
+                                {analyticsModal === 'peak_hours' && 'All Activity Hours (Full 24h)'}
+                                {analyticsModal === 'messages_per_day' && 'Daily Message History'}
+                                {analyticsModal === 'top_queries' && 'All User Queries'}
+                            </h3>
+                            <button
+                                onClick={() => setAnalyticsModal(null)}
+                                className="w-8 h-8 rounded-xl bg-white/5 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-all"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div className="overflow-y-auto custom-scrollbar p-5 flex-1 space-y-3">
+
+                            {/* TOTAL SESSIONS */}
+                            {analyticsModal === 'total_sessions' && (
+                                <div className="space-y-2">
+                                    {sessions.length === 0 ? (
+                                        <p className="text-slate-500 text-sm text-center py-8">No sessions found.</p>
+                                    ) : (
+                                        [...sessions]
+                                            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                                            .map(s => (
+                                                <div key={s.session_id} className="flex items-center justify-between bg-slate-800/50 rounded-xl p-3 border border-white/5 gap-3">
+                                                    <div className="min-w-0">
+                                                        <p className="text-sm font-medium text-white truncate">{s.customer_name || 'Anonymous'}</p>
+                                                        <p className="text-xs text-slate-400 font-mono truncate">{s.session_id}</p>
+                                                        {s.user_contact && <p className="text-xs text-slate-500 truncate">{s.user_contact}</p>}
+                                                    </div>
+                                                    <div className="flex items-center gap-3 shrink-0">
+                                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${s.status === 'ai' ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
+                                                            {s.status?.toUpperCase()} MODE
+                                                        </span>
+                                                        <span className="text-xs text-slate-500 whitespace-nowrap">{s.created_at ? format(new Date(s.created_at), 'MMM dd, HH:mm') : '—'}</span>
+                                                    </div>
+                                                </div>
+                                            ))
+                                    )}
+                                </div>
+                            )}
+
+                            {/* TOTAL MESSAGES */}
+                            {analyticsModal === 'total_messages' && analytics && (
+                                <div className="space-y-5">
+                                    <div>
+                                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">By Sender</h4>
+                                        <div className="space-y-2">
+                                            {analytics.messagesBySender?.map((item, idx) => {
+                                                const pct = analytics.totalMessages > 0 ? Math.round((item.count / analytics.totalMessages) * 100) : 0;
+                                                return (
+                                                    <div key={idx} className="bg-slate-800/50 rounded-xl p-3 border border-white/5">
+                                                        <div className="flex justify-between mb-1.5">
+                                                            <span className="text-sm text-slate-300 capitalize">{item.sender}</span>
+                                                            <span className="text-sm font-mono text-white">{item.count} ({pct}%)</span>
+                                                        </div>
+                                                        <div className="h-2 bg-slate-700/50 rounded-full overflow-hidden">
+                                                            <div
+                                                                className={`h-full rounded-full ${item.sender === 'user' ? 'bg-blue-500' : item.sender === 'ai' ? 'bg-green-500' : 'bg-purple-500'}`}
+                                                                style={{ width: `${pct}%` }}
+                                                            ></div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Per Day</h4>
+                                        <div className="space-y-1">
+                                            {analytics.messagesPerDay?.map((item, idx) => (
+                                                <div key={idx} className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-800/40">
+                                                    <span className="text-sm text-slate-300">{format(new Date(item.date), 'MMM dd, yyyy')}</span>
+                                                    <span className="text-sm font-mono text-white">{item.count} messages</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ACTIVE 24H */}
+                            {analyticsModal === 'active_24h' && (() => {
+                                const now = Date.now();
+                                const active = sessions.filter(s => now - new Date(s.last_message_at || s.updated_at || 0).getTime() < 86400000);
+                                return active.length === 0 ? (
+                                    <p className="text-slate-500 text-sm text-center py-8">No sessions active in the last 24 hours.</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {active.map(s => (
+                                            <div key={s.session_id} className="bg-slate-800/50 rounded-xl p-3 border border-white/5 flex items-center justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <p className="text-sm font-medium text-white truncate">{s.customer_name || 'Anonymous'}</p>
+                                                    <p className="text-xs text-slate-400 font-mono truncate">{s.session_id}</p>
+                                                </div>
+                                                <div className="text-right shrink-0">
+                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium block mb-1 ${s.status === 'ai' ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
+                                                        {s.status?.toUpperCase()}
+                                                    </span>
+                                                    <p className="text-xs text-green-400">{s.last_message_at || s.updated_at ? format(new Date(s.last_message_at || s.updated_at), 'HH:mm') : '—'}</p>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
+
+                            {/* AVG RESPONSE */}
+                            {analyticsModal === 'avg_response' && analytics && (
+                                <div className="space-y-4">
+                                    <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-6 text-center">
+                                        <p className="text-5xl font-bold text-orange-400">{Math.round(analytics.avgResponseTimeSeconds || 0)}s</p>
+                                        <p className="text-sm text-slate-400 mt-2">Average AI Response Time</p>
+                                    </div>
+                                    <div className="bg-slate-800/50 rounded-xl p-4 border border-white/5 space-y-3">
+                                        <p className="text-xs text-slate-300 leading-relaxed">Measures the average time between a user message and the AI reply across all sessions.</p>
+                                        <div className="space-y-2 mt-2">
+                                            {[
+                                                { color: 'bg-green-500', label: 'Under 5s — Excellent response time' },
+                                                { color: 'bg-yellow-500', label: '5–15s — Acceptable response time' },
+                                                { color: 'bg-red-500', label: 'Over 15s — Consider optimization' },
+                                            ].map((row, i) => (
+                                                <div key={i} className="flex items-center gap-2">
+                                                    <div className={`w-2 h-2 rounded-full ${row.color}`}></div>
+                                                    <span className="text-xs text-slate-400">{row.label}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="bg-slate-800/50 rounded-xl p-4 border border-white/5 text-center">
+                                            <p className="text-2xl font-bold text-white">{analytics.totalSessions}</p>
+                                            <p className="text-xs text-slate-400 mt-1">Total Sessions</p>
+                                        </div>
+                                        <div className="bg-slate-800/50 rounded-xl p-4 border border-white/5 text-center">
+                                            <p className="text-2xl font-bold text-white">{analytics.avgMessagesPerSession}</p>
+                                            <p className="text-xs text-slate-400 mt-1">Avg Msgs / Session</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* MESSAGES BY SENDER */}
+                            {analyticsModal === 'messages_by_sender' && analytics && (
+                                <div className="space-y-3">
+                                    {analytics.messagesBySender?.map((item, idx) => {
+                                        const pct = analytics.totalMessages > 0 ? Math.round((item.count / analytics.totalMessages) * 100) : 0;
+                                        return (
+                                            <div key={idx} className="bg-slate-800/50 rounded-xl p-4 border border-white/5">
+                                                <div className="flex items-center gap-3 mb-3">
+                                                    <div className={`w-4 h-4 rounded-full ${item.sender === 'user' ? 'bg-blue-500' : item.sender === 'ai' ? 'bg-green-500' : 'bg-purple-500'}`}></div>
+                                                    <span className="text-sm font-medium text-white capitalize">{item.sender}</span>
+                                                    <span className="ml-auto text-2xl font-bold text-white">{item.count}</span>
+                                                </div>
+                                                <div className="flex items-center gap-3">
+                                                    <div className="flex-1 h-3 bg-slate-700/50 rounded-full overflow-hidden">
+                                                        <div
+                                                            className={`h-full rounded-full ${item.sender === 'user' ? 'bg-blue-500' : item.sender === 'ai' ? 'bg-green-500' : 'bg-purple-500'}`}
+                                                            style={{ width: `${pct}%` }}
+                                                        ></div>
+                                                    </div>
+                                                    <span className="text-sm font-bold text-slate-300 w-10 text-right">{pct}%</span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                    <div className="bg-slate-800/30 rounded-xl p-4 border border-white/5 text-center">
+                                        <p className="text-3xl font-bold text-white">{analytics.totalMessages}</p>
+                                        <p className="text-xs text-slate-400 mt-1">Total Messages</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* SESSIONS BY STATUS */}
+                            {analyticsModal === 'sessions_by_status' && analytics && (
+                                <div className="space-y-5">
+                                    {analytics.sessionsByStatus?.map((statusItem, idx) => {
+                                        const statusSessions = sessions.filter(s => s.status === statusItem.status);
+                                        return (
+                                            <div key={idx}>
+                                                <div className="flex items-center gap-2 mb-2 px-1">
+                                                    <div className={`w-3 h-3 rounded-full ${statusItem.status === 'ai' ? 'bg-green-500' : 'bg-orange-500'}`}></div>
+                                                    <span className="text-sm font-bold text-white uppercase">{statusItem.status} Mode</span>
+                                                    <span className="ml-auto text-sm font-mono text-slate-300">{statusItem.count} sessions</span>
+                                                </div>
+                                                <div className="space-y-1.5 pl-3">
+                                                    {statusSessions.map(s => (
+                                                        <div key={s.session_id} className="flex items-center justify-between bg-slate-800/40 rounded-lg p-2.5 border border-white/5">
+                                                            <div className="min-w-0">
+                                                                <p className="text-xs font-medium text-white truncate">{s.customer_name || 'Anonymous'}</p>
+                                                                <p className="text-[10px] text-slate-500 font-mono truncate">{s.session_id}</p>
+                                                            </div>
+                                                            <span className="text-[10px] text-slate-400 shrink-0 ml-3">{s.created_at ? format(new Date(s.created_at), 'MMM dd') : '—'}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {/* PEAK HOURS — full 24h */}
+                            {analyticsModal === 'peak_hours' && analytics && (
+                                <div className="space-y-1.5">
+                                    {Array.from({ length: 24 }, (_, h) => {
+                                        const item = analytics.peakHours?.find(p => Number(p.hour) === h);
+                                        const count = item?.count || 0;
+                                        const max = Math.max(...(analytics.peakHours?.map(p => p.count) || [1]), 1);
+                                        return (
+                                            <div key={h} className="flex items-center gap-3">
+                                                <span className="text-xs text-slate-400 w-14 text-right">{String(h).padStart(2, '0')}:00</span>
+                                                <div className="flex-1 bg-slate-700/50 rounded-full h-2.5 overflow-hidden">
+                                                    <div
+                                                        className={`h-full rounded-full transition-all ${count > 0 ? 'bg-gradient-to-r from-orange-500 to-yellow-500' : ''}`}
+                                                        style={{ width: `${(count / max) * 100}%` }}
+                                                    ></div>
+                                                </div>
+                                                <span className="text-xs font-mono text-slate-300 w-8 text-right">{count || '—'}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {/* MESSAGES PER DAY — full history */}
+                            {analyticsModal === 'messages_per_day' && analytics && (
+                                <div className="space-y-1">
+                                    {analytics.messagesPerDay?.map((item, idx) => {
+                                        const max = Math.max(...analytics.messagesPerDay.map(d => d.count), 1);
+                                        return (
+                                            <div key={idx} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-800/40">
+                                                <span className="text-sm text-slate-300 w-28 shrink-0">{format(new Date(item.date), 'MMM dd, yyyy')}</span>
+                                                <div className="flex-1 bg-slate-700/50 rounded-full h-2 overflow-hidden">
+                                                    <div
+                                                        className="h-full bg-gradient-to-r from-purple-500 to-blue-500 rounded-full"
+                                                        style={{ width: `${(item.count / max) * 100}%` }}
+                                                    ></div>
+                                                </div>
+                                                <span className="text-xs font-mono text-slate-300 w-14 text-right">{item.count} msgs</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {/* TOP QUERIES */}
+                            {analyticsModal === 'top_queries' && (
+                                <div className="space-y-2">
+                                    {topQueries.length === 0 ? (
+                                        <p className="text-slate-500 text-sm text-center py-8">No queries recorded yet.</p>
+                                    ) : topQueries.map((item, idx) => (
+                                        <div key={idx} className="bg-slate-800/50 rounded-xl p-3 border border-white/5">
+                                            <p className="text-sm text-slate-200 whitespace-pre-wrap break-words">{item.query}</p>
+                                            <div className="flex items-center justify-between mt-2">
+                                                <span className="text-[10px] text-slate-500 uppercase">Frequency</span>
+                                                <span className="text-xs font-bold text-cyan-400">{item.count}x</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <style>{`
                 .custom-scrollbar::-webkit-scrollbar {

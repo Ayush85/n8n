@@ -124,9 +124,53 @@
             padding: 16px;
             border-top: 1px solid #e2e8f0;
             display: flex;
-            gap: 10px;
+            flex-direction: column;
+            gap: 8px;
             background: #ffffff;
         }
+        .n8n-input-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        /* Paste preview strip */
+        .n8n-paste-preview {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #f0f7ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 10px;
+            padding: 8px 10px;
+            font-size: 12px;
+            color: #1e40af;
+        }
+        .n8n-paste-preview img {
+            width: 48px;
+            height: 48px;
+            object-fit: cover;
+            border-radius: 6px;
+            flex-shrink: 0;
+        }
+        .n8n-paste-preview-name {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-weight: 600;
+        }
+        .n8n-paste-cancel {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            color: #64748b;
+            padding: 2px 4px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+        .n8n-paste-cancel:hover { color: #ef4444; }
         .n8n-chat-input {
             flex: 1;
             padding: 12px 16px;
@@ -253,6 +297,59 @@
         }
         .n8n-mode-ai { background: rgba(16, 185, 129, 0.2); color: #059669; }
         .n8n-mode-human { background: rgba(239, 68, 68, 0.2); color: #dc2626; }
+
+        /* File attachment button */
+        .n8n-attach-btn {
+            background: #f1f5f9;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 10px 12px;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        .n8n-attach-btn:hover { background: #e2e8f0; border-color: #cbd5e1; }
+        .n8n-attach-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* File message rendering */
+        .n8n-file-msg { display: flex; flex-direction: column; gap: 6px; }
+        .n8n-file-img {
+            max-width: 220px;
+            max-height: 180px;
+            border-radius: 10px;
+            object-fit: cover;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .n8n-file-img:hover { opacity: 0.85; }
+        .n8n-file-doc {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255,255,255,0.25);
+            border: 1px solid rgba(255,255,255,0.4);
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-size: 13px;
+            text-decoration: none;
+            color: inherit;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        .n8n-msg-ai .n8n-file-doc, .n8n-msg-admin .n8n-file-doc {
+            background: rgba(0,0,0,0.06);
+            border-color: rgba(0,0,0,0.12);
+            color: #1e293b;
+        }
+        .n8n-file-doc:hover { background: rgba(255,255,255,0.4); }
+        .n8n-file-name { max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .n8n-upload-progress {
+            font-size: 12px;
+            opacity: 0.8;
+            font-style: italic;
+        }
 
         /* Markdown Styles */
         .n8n-msg p { margin: 0 0 8px 0; }
@@ -560,7 +657,9 @@
             .n8n-chat-input-area {
                 padding: 10px 12px;
                 padding-bottom: max(10px, env(safe-area-inset-bottom));
-                gap: 8px;
+                gap: 6px;
+            }
+            .n8n-input-row {
                 align-items: center;
             }
             .n8n-chat-input {
@@ -619,13 +718,13 @@
 
             <!-- Tab Bar (hidden until user logs in) -->
             <div class="n8n-tab-bar" id="n8n-tab-bar">
-                <button class="n8n-tab active" id="n8n-tab-chat" data-tab="chat">💬 Chat</button>
-                <button class="n8n-tab" id="n8n-tab-history" data-tab="history">📋 History</button>
+                <button class="n8n-tab active" id="n8n-tab-chat" data-tab="chat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:5px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat</button>
+                <button class="n8n-tab" id="n8n-tab-history" data-tab="history"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>History</button>
             </div>
 
             <!-- Pre-chat Form (shown to new users) -->
             <div id="n8n-prechat-container" class="n8n-prechat-form" style="${userInfo ? 'display: none;' : ''}">
-                <div class="n8n-prechat-title">👋 Welcome!</div>
+                <div class="n8n-prechat-title">Welcome!</div>
                 <div class="n8n-prechat-subtitle">Please provide your email or phone number so we can reach you.</div>
                 <form id="n8n-prechat-form">
                     <div class="n8n-prechat-field">
@@ -645,8 +744,17 @@
                 </div>
                 <div id="n8n-chat-messages" class="n8n-chat-messages"></div>
                 <form id="n8n-chat-form" class="n8n-chat-input-area">
-                    <input type="text" id="n8n-chat-input" class="n8n-chat-input" placeholder="Type your message..." autocomplete="off">
-                    <button type="submit" class="n8n-chat-send" id="n8n-chat-send">Send</button>
+                    <input type="file" id="n8n-file-input" accept="image/*,.pdf,.doc,.docx,.txt,.xls,.xlsx" style="display:none">
+                    <div id="n8n-paste-preview" style="display:none" class="n8n-paste-preview">
+                        <img id="n8n-paste-thumb" src="" alt="">
+                        <span class="n8n-paste-preview-name" id="n8n-paste-name"></span>
+                        <button type="button" class="n8n-paste-cancel" id="n8n-paste-cancel" title="Remove">×</button>
+                    </div>
+                    <div class="n8n-input-row">
+                        <button type="button" id="n8n-attach-btn" class="n8n-attach-btn" title="Attach file"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+                        <input type="text" id="n8n-chat-input" class="n8n-chat-input" placeholder="Type a message or paste image..." autocomplete="off">
+                        <button type="submit" class="n8n-chat-send" id="n8n-chat-send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:5px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send</button>
+                    </div>
                 </form>
             </div>
 
@@ -693,6 +801,11 @@
     // Session/history panel elements
     const sessionList = document.getElementById('n8n-session-list');
     const newChatBtn = document.getElementById('n8n-new-chat-btn');
+
+    // File upload elements
+    const fileInput = document.getElementById('n8n-file-input');
+    const attachBtn = document.getElementById('n8n-attach-btn');
+    if (attachBtn) attachBtn.addEventListener('click', () => fileInput && fileInput.click());
 
     // ============================================
     // HELPER FUNCTIONS
@@ -772,6 +885,19 @@
         tabChat.classList.add('active');
         tabHistory.classList.remove('active');
         setTimeout(() => scrollToBottom(), 100);
+    }
+
+    // Show session picker (multiple sessions found) — opens History tab pre-populated
+    function showSessionPicker(sessions) {
+        prechatContainer.style.display = 'none';
+        tabBar.classList.add('visible');
+        // Render sessions into the list first
+        renderSessionList(sessions);
+        // Then switch to History tab
+        tabHistory.classList.add('active');
+        tabChat.classList.remove('active');
+        panelHistory.style.display = 'flex';
+        panelChat.style.display = 'none';
     }
 
     // Switch to a different session (for returning users)
@@ -866,7 +992,7 @@
             const item = document.createElement('div');
             item.className = 'n8n-session-item' + (isActive ? ' active-session' : '');
             item.innerHTML = `
-                <div class="n8n-session-item-title">${isActive ? '▶ ' : ''}${title}</div>
+                <div class="n8n-session-item-title">${isActive ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="display:inline;vertical-align:-1px;margin-right:4px;color:#0f67b2"><polygon points="5 3 19 12 5 21 5 3"/></svg>' : ''}${title}</div>
                 <div class="n8n-session-item-meta">
                     <span>${date}</span>
                     <span class="n8n-session-item-badge ${badgeClass}">${badgeLabel}</span>
@@ -915,6 +1041,119 @@
     }
 
     if (newChatBtn) newChatBtn.addEventListener('click', startNewChat);
+
+    // ============================================
+    // FILE UPLOAD HANDLER (shared)
+    // ============================================
+    async function uploadFile(file) {
+        // Show progress placeholder
+        const progressWrapper = document.createElement('div');
+        progressWrapper.className = 'n8n-msg-wrapper n8n-msg-wrapper-user';
+        const progressLabel = document.createElement('div');
+        progressLabel.className = 'n8n-msg-label n8n-msg-label-user';
+        progressLabel.innerText = 'You';
+        const progressBubble = document.createElement('div');
+        progressBubble.className = 'n8n-msg n8n-msg-user';
+        progressBubble.innerHTML = `<span class="n8n-upload-progress">📎 Uploading ${file.name}...</span>`;
+        progressWrapper.appendChild(progressLabel);
+        progressWrapper.appendChild(progressBubble);
+        chatMessages.appendChild(progressWrapper);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        if (attachBtn) attachBtn.disabled = true;
+
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('sessionId', sessionId);
+
+            const resp = await fetch(`${CONFIG.API_URL}/api/upload`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ error: 'Upload failed' }));
+                throw new Error(err.error || `Upload failed: ${resp.status}`);
+            }
+
+            const result = await resp.json();
+            progressWrapper.remove();
+
+            const payload = JSON.stringify({
+                fileUrl: result.fileUrl,
+                fileName: result.fileName,
+                fileType: result.fileType,
+                fileSize: result.fileSize
+            });
+            addMessage('user', payload);
+
+        } catch (err) {
+            progressBubble.innerHTML = `<span style="color:#fca5a5"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>Upload failed: ${err.message}</span>`;
+            console.error('File upload error:', err);
+        } finally {
+            if (attachBtn) attachBtn.disabled = false;
+        }
+    }
+
+    // File input change (📎 button)
+    if (fileInput) {
+        fileInput.addEventListener('change', async () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+            fileInput.value = '';
+            await uploadFile(file);
+        });
+    }
+
+    // ============================================
+    // PASTE PREVIEW (clipboard images)
+    // ============================================
+    let pendingPasteFile = null;
+    const pastePreviewEl = document.getElementById('n8n-paste-preview');
+    const pasteThumbEl   = document.getElementById('n8n-paste-thumb');
+    const pasteNameEl    = document.getElementById('n8n-paste-name');
+    const pasteCancelBtn = document.getElementById('n8n-paste-cancel');
+
+    function showPastePreview(file) {
+        pendingPasteFile = file;
+        pasteNameEl.textContent = file.name;
+        const reader = new FileReader();
+        reader.onload = (ev) => { pasteThumbEl.src = ev.target.result; };
+        reader.readAsDataURL(file);
+        pastePreviewEl.style.display = 'flex';
+        chatInput.placeholder = 'Add a caption (optional)...';
+        chatInput.focus();
+    }
+
+    function clearPastePreview() {
+        pendingPasteFile = null;
+        pastePreviewEl.style.display = 'none';
+        pasteThumbEl.src = '';
+        pasteNameEl.textContent = '';
+        chatInput.placeholder = 'Type a message or paste image...';
+    }
+
+    if (pasteCancelBtn) pasteCancelBtn.addEventListener('click', clearPastePreview);
+
+    // Listen for paste on the input and message area
+    chatMessages.addEventListener('paste', handlePaste);
+    chatInput.addEventListener('paste', handlePaste);
+
+    function handlePaste(e) {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        for (const item of items) {
+            if (item.kind === 'file' && item.type.startsWith('image/')) {
+                e.preventDefault();
+                const ext = item.type === 'image/png' ? '.png' : item.type === 'image/gif' ? '.gif' : item.type === 'image/webp' ? '.webp' : '.jpg';
+                const blob = item.getAsFile();
+                const file = new File([blob], `screenshot${ext}`, { type: item.type });
+                showPastePreview(file);
+                return;
+            }
+        }
+    }
 
     // New Chat button inside the Chat panel
     const newChatBtnChat = document.getElementById('n8n-new-chat-btn-chat');
@@ -1015,6 +1254,41 @@
         addSystemMessage('Welcome! How can we help you today?');
     };
 
+    // Try to parse a file-message payload from a content string
+    function parseFileMsg(content) {
+        try {
+            const p = JSON.parse(content);
+            return (p && typeof p.fileUrl === 'string') ? p : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function renderFileMsgContent(fileData, sender) {
+        const container = document.createElement('div');
+        container.className = 'n8n-file-msg';
+        const isImage = fileData.fileType && fileData.fileType.startsWith('image/');
+        if (isImage) {
+            const img = document.createElement('img');
+            img.className = 'n8n-file-img';
+            img.src = fileData.fileUrl;
+            img.alt = fileData.fileName || 'image';
+            img.title = fileData.fileName || 'image';
+            img.addEventListener('click', () => window.open(fileData.fileUrl, '_blank'));
+            container.appendChild(img);
+        } else {
+            const link = document.createElement('a');
+            link.className = 'n8n-file-doc';
+            link.href = fileData.fileUrl;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            const sizeKB = fileData.fileSize ? Math.round(fileData.fileSize / 1024) : null;
+            link.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="n8n-file-name">${fileData.fileName || 'File'}</span>${sizeKB ? `<span style="opacity:0.7;font-size:11px">${sizeKB}KB</span>` : ''}`;
+            container.appendChild(link);
+        }
+        return container;
+    }
+
     function addMessage(sender, content) {
         removeTypingIndicator();
 
@@ -1028,9 +1302,9 @@
         if (sender === 'user') {
             labelDiv.innerText = 'You';
         } else if (sender === 'ai') {
-            labelDiv.innerText = '🤖 AI Bot';
+            labelDiv.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-1px;margin-right:4px"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>AI Bot';
         } else if (sender === 'admin') {
-            labelDiv.innerText = '👤 Support Agent';
+            labelDiv.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-1px;margin-right:4px"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Support Agent';
         }
         wrapperDiv.appendChild(labelDiv);
 
@@ -1038,7 +1312,11 @@
         const msgDiv = document.createElement('div');
         msgDiv.className = `n8n-msg n8n-msg-${sender}`;
 
-        if (typeof marked !== 'undefined' && sender !== 'user') {
+        // Detect file message
+        const fileData = parseFileMsg(content);
+        if (fileData) {
+            msgDiv.appendChild(renderFileMsgContent(fileData, sender));
+        } else if (typeof marked !== 'undefined' && sender !== 'user') {
             msgDiv.innerHTML = marked.parse(content);
         } else {
             msgDiv.innerText = content;
@@ -1192,6 +1470,40 @@
     chatForm.onsubmit = async (e) => {
         e.preventDefault();
         const content = chatInput.value.trim();
+
+        // If there's a pending pasted image, upload it (with optional caption)
+        if (pendingPasteFile) {
+            const fileToUpload = pendingPasteFile;
+            clearPastePreview();
+            chatInput.value = '';
+            await uploadFile(fileToUpload);
+            // If there was also a caption, send it as a separate text message
+            if (content) {
+                addMessage('user', content);
+                setLoading(true);
+                await saveMessageToDB('user', content);
+                if (sessionMode === 'ai') {
+                    showTypingIndicator();
+                    try {
+                        const aiResponse = await sendToN8nAI(content);
+                        removeTypingIndicator();
+                        if (aiResponse && aiResponse.output) {
+                            addMessage('ai', aiResponse.output);
+                            if (!aiResponse.saved) await saveMessageToDB('ai', aiResponse.output);
+                        }
+                    } catch (err) {
+                        removeTypingIndicator();
+                        addSystemMessage('⚠️ AI unavailable. Connecting to human support...');
+                        setMode('human');
+                    }
+                } else {
+                    statusText.textContent = 'Message sent • Waiting for response...';
+                }
+                setLoading(false);
+            }
+            return;
+        }
+
         if (!content) return;
 
         // Show user message immediately
