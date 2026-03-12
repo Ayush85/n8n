@@ -641,6 +641,26 @@ app.put('/api/sessions/:sessionId/user-info', async (req, res, next) => {
     }
 });
 
+// Create a new chat session for a contact (used by the chat widget)
+app.post('/api/sessions/new', async (req, res, next) => {
+    const { contact, customerName } = req.body;
+    if (!contact) {
+        return res.status(400).json({ error: 'contact is required' });
+    }
+    try {
+        const newSessionId = 'sess_' + Math.random().toString(36).substr(2, 9);
+        await pool.query(
+            `INSERT INTO sessions (session_id, user_contact, customer_name, status, is_active)
+             VALUES ($1, $2, $3, 'ai', true)`,
+            [newSessionId, contact, customerName || contact]
+        );
+        logger.info(`New session ${newSessionId} created for contact ${contact}`);
+        res.json({ success: true, session_id: newSessionId });
+    } catch (error) {
+        next(error);
+    }
+});
+
 // Find existing session by contact (for session continuity)
 app.get('/api/sessions/by-contact/:contact', async (req, res, next) => {
     const { contact } = req.params;
