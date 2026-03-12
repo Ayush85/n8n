@@ -1,9 +1,31 @@
 (function () {
     // ============================================
-    // CONFIGURATION - Customize these values
+    // CONFIGURATION - Auto-detect API URL
     // ============================================
+    const getApiUrl = () => {
+        // 1. Check if explicitly set
+        if (window.N8N_CHAT_API_URL) return window.N8N_CHAT_API_URL;
+        
+        // 2. Try to detect from the script's src (works for third-party embeds)
+        const scripts = document.querySelectorAll('script');
+        for (const script of scripts) {
+            if (script.src && script.src.includes('chat-widget.js')) {
+                const url = new URL(script.src);
+                return `${url.protocol}//${url.host}`;
+            }
+        }
+        
+        // 3. Localhost default
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            return 'http://localhost:3001';
+        }
+        
+        // 4. Fallback to current domain
+        return window.location.origin;
+    };
+
     const CONFIG = {
-        API_URL: window.N8N_CHAT_API_URL || 'http://localhost:3001',
+        API_URL: getApiUrl(),
         CLIENT_ID: window.N8N_CHAT_CLIENT_ID || 'client_1',
         SITE_NAME: window.N8N_CHAT_SITE_NAME || 'Fatafat Sewa',
         PRIMARY_COLOR: window.N8N_CHAT_PRIMARY_COLOR || '#0f67b2',
