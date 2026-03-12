@@ -55,6 +55,16 @@ const adminFetch = (url, options = {}) => {
     return fetch(url, { ...options, headers });
 };
 
+// Helper: format message timestamp — today shows HH:mm, older shows MMM d, HH:mm
+function formatMsgTime(ts) {
+    const d = ts ? new Date(ts) : new Date();
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    return isToday
+        ? format(d, 'HH:mm')
+        : format(d, 'MMM d, HH:mm');
+}
+
 // Helper: parse a file-message payload from a message content string
 function parseFileMsg(content) {
     try {
@@ -508,17 +518,39 @@ function App() {
                         </div>
                         {analytics && (
                             <div className="space-y-3 px-2">
-                                <div className="bg-slate-800/50 border border-white/5 rounded-xl p-4">
+                                {/* Total Sessions → navigate to chats */}
+                                <button
+                                    onClick={() => setCurrentView('chats')}
+                                    className="w-full bg-slate-800/50 border border-white/5 rounded-xl p-4 hover:bg-slate-700/60 hover:border-blue-500/30 transition-all duration-200 group cursor-pointer text-left"
+                                >
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-blue-600/20 flex items-center justify-center">
-                                            <Users size={18} className="text-blue-400" />
+                                        <div className="w-10 h-10 rounded-lg bg-blue-600/20 flex items-center justify-center group-hover:bg-blue-600/30 transition-colors">
+                                            <MessageSquare size={18} className="text-blue-400" />
                                         </div>
-                                        <div>
+                                        <div className="flex-1">
                                             <p className="text-xl font-bold text-white">{analytics.totalSessions}</p>
                                             <p className="text-[10px] text-slate-400">Total Sessions</p>
                                         </div>
+                                        <ChevronRight size={14} className="text-slate-600 group-hover:text-blue-400 transition-colors" />
                                     </div>
-                                </div>
+                                </button>
+                                {/* Total Users → navigate to users */}
+                                <button
+                                    onClick={() => setCurrentView('users')}
+                                    className="w-full bg-slate-800/50 border border-white/5 rounded-xl p-4 hover:bg-slate-700/60 hover:border-emerald-500/30 transition-all duration-200 group cursor-pointer text-left"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-emerald-600/20 flex items-center justify-center group-hover:bg-emerald-600/30 transition-colors">
+                                            <Users size={18} className="text-emerald-400" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="text-xl font-bold text-white">{analytics.totalUsers ?? totalUniqueUsers}</p>
+                                            <p className="text-[10px] text-slate-400">Total Users</p>
+                                        </div>
+                                        <ChevronRight size={14} className="text-slate-600 group-hover:text-emerald-400 transition-colors" />
+                                    </div>
+                                </button>
+                                {/* Total Messages — no dedicated view, highlight stat */}
                                 <div className="bg-slate-800/50 border border-white/5 rounded-xl p-4">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-lg bg-purple-600/20 flex items-center justify-center">
@@ -530,17 +562,22 @@ function App() {
                                         </div>
                                     </div>
                                 </div>
-                                <div className="bg-slate-800/50 border border-white/5 rounded-xl p-4">
+                                {/* Active Today → navigate to chats */}
+                                <button
+                                    onClick={() => setCurrentView('chats')}
+                                    className="w-full bg-slate-800/50 border border-white/5 rounded-xl p-4 hover:bg-slate-700/60 hover:border-green-500/30 transition-all duration-200 group cursor-pointer text-left"
+                                >
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-lg bg-green-600/20 flex items-center justify-center">
+                                        <div className="w-10 h-10 rounded-lg bg-green-600/20 flex items-center justify-center group-hover:bg-green-600/30 transition-colors">
                                             <Activity size={18} className="text-green-400" />
                                         </div>
-                                        <div>
+                                        <div className="flex-1">
                                             <p className="text-xl font-bold text-white">{analytics.activeSessions24h}</p>
                                             <p className="text-[10px] text-slate-400">Active Today</p>
                                         </div>
+                                        <ChevronRight size={14} className="text-slate-600 group-hover:text-green-400 transition-colors" />
                                     </div>
-                                </div>
+                                </button>
                             </div>
                         )}
                     </div>
@@ -1274,7 +1311,7 @@ function App() {
                                                             }`}>{getSenderLabel(msg.sender)}</span>
                                                     </div>
                                                 )}
-                                                <div className={`relative px-5 py-4 rounded-3xl shadow-2xl transition-all duration-300 ${msg.sender === 'admin'
+                                                <div className={`px-5 py-4 rounded-3xl shadow-2xl transition-all duration-300 ${msg.sender === 'admin'
                                                     ? 'bg-blue-600 text-white rounded-tr-none border border-blue-400/20 ring-1 ring-blue-500/30'
                                                     : msg.sender === 'ai'
                                                         ? 'bg-green-900/40 backdrop-blur-md border border-green-500/20 text-slate-100 rounded-tl-none ring-1 ring-green-500/10'
@@ -1308,12 +1345,13 @@ function App() {
                                                         }
                                                         return <p className="text-[14px] leading-relaxed font-normal whitespace-pre-wrap">{msg.content}</p>;
                                                     })()}
-                                                    <div className={`absolute bottom-1 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-all duration-500 translate-y-1 group-hover:translate-y-0`}>
-                                                        <span className="text-[9px] font-medium text-white/40 font-mono tracking-tighter">
-                                                            {format(new Date(msg.created_at || new Date()), 'HH:mm')}
-                                                        </span>
-                                                        {msg.sender === 'admin' && <CheckCheck size={10} className="text-white/60" />}
-                                                    </div>
+                                                </div>
+                                                {/* Timestamp — always visible below the bubble */}
+                                                <div className={`flex items-center gap-1.5 mt-1 px-1 ${msg.sender === 'admin' ? 'justify-end' : 'justify-start'}`}>
+                                                    <span className="text-[10px] text-slate-500 font-mono">
+                                                        {formatMsgTime(msg.created_at)}
+                                                    </span>
+                                                    {msg.sender === 'admin' && <CheckCheck size={11} className="text-blue-400/70" />}
                                                 </div>
                                             </div>
                                         </div>

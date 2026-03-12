@@ -66,13 +66,18 @@
         }
         #n8n-chat-button:hover { transform: scale(1.08); box-shadow: 0 6px 24px rgba(37, 99, 235, 0.5); }
         #n8n-chat-button svg { fill: white; width: 28px; height: 28px; }
+        #n8n-chat-button.hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.85);
+        }
         
         #n8n-chat-window {
             position: absolute;
             bottom: 80px;
             right: 0;
-            width: 380px;
-            height: 550px;
+            width: 400px;
+            height: 680px;
             background: #ffffff;
             border-radius: 20px;
             box-shadow: 0 12px 40px rgba(0,0,0,0.2);
@@ -81,7 +86,11 @@
             overflow: hidden;
             border: 1px solid #e2e8f0;
         }
-        #n8n-chat-window.open { display: flex; animation: slideUp 0.3s ease; }
+        #n8n-chat-window.open {
+            display: flex;
+            bottom: 0;
+            animation: slideUp 0.3s ease;
+        }
         @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         
         .n8n-chat-header {
@@ -187,14 +196,17 @@
             background: ${CONFIG.PRIMARY_COLOR};
             color: white;
             border: none;
-            padding: 12px 20px;
+            width: 44px;
+            height: 44px;
             border-radius: 12px;
             cursor: pointer;
-            font-weight: 600;
-            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
             transition: all 0.2s;
         }
-        .n8n-chat-send:hover { background: #1d4ed8; transform: scale(1.02); }
+        .n8n-chat-send:hover { background: #1d4ed8; transform: scale(1.05); }
         .n8n-chat-send:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
         
         .n8n-msg {
@@ -252,6 +264,56 @@
         .n8n-msg-label-admin {
             text-align: left;
             color: #6366f1;
+        }
+        .n8n-msg-time {
+            font-size: 10px;
+            font-weight: 400;
+            opacity: 0.5;
+            margin-left: 6px;
+            white-space: nowrap;
+        }
+
+        /* ====== SUGGESTION CHIPS ====== */
+        .n8n-suggestions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding: 8px 14px 6px;
+            flex-shrink: 0;
+            background: #ffffff;
+            border-top: 1px solid #f1f5f9;
+        }
+        .n8n-suggestions.hidden { display: none; }
+        .n8n-suggestion-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: #f0f7ff;
+            border: 1.5px solid #bfdbfe;
+            color: #1e40af;
+            border-radius: 20px;
+            padding: 6px 13px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.15s;
+            line-height: 1;
+            font-family: inherit;
+        }
+        .n8n-suggestion-chip:hover {
+            background: #dbeafe;
+            border-color: #93c5fd;
+            transform: translateY(-1px);
+        }
+        .n8n-suggestion-chip.human {
+            background: #fff1f2;
+            border-color: #fecdd3;
+            color: #be123c;
+        }
+        .n8n-suggestion-chip.human:hover {
+            background: #ffe4e6;
+            border-color: #fda4af;
         }
         .n8n-msg-wrapper {
             display: flex;
@@ -600,8 +662,8 @@
         }
         @media (max-width: 768px) {
             #n8n-chat-window {
-                width: 340px;
-                height: 500px;
+                width: 360px;
+                height: 620px;
             }
         }
 
@@ -669,10 +731,10 @@
                 font-size: 16px; /* Prevents iOS zoom on focus */
             }
             .n8n-chat-send {
-                padding: 10px 18px;
-                font-size: 14px;
+                width: 44px;
+                height: 44px;
+                padding: 0;
                 border-radius: 12px;
-                white-space: nowrap;
                 flex-shrink: 0;
             }
             .n8n-msg {
@@ -743,6 +805,7 @@
                     <button class="n8n-new-chat-btn" id="n8n-new-chat-btn-chat">+ New Chat</button>
                 </div>
                 <div id="n8n-chat-messages" class="n8n-chat-messages"></div>
+                <div id="n8n-suggestions" class="n8n-suggestions hidden"></div>
                 <form id="n8n-chat-form" class="n8n-chat-input-area">
                     <input type="file" id="n8n-file-input" accept="image/*,.pdf,.doc,.docx,.txt,.xls,.xlsx" style="display:none">
                     <div id="n8n-paste-preview" style="display:none" class="n8n-paste-preview">
@@ -753,7 +816,7 @@
                     <div class="n8n-input-row">
                         <button type="button" id="n8n-attach-btn" class="n8n-attach-btn" title="Attach file"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
                         <input type="text" id="n8n-chat-input" class="n8n-chat-input" placeholder="Type a message or paste image..." autocomplete="off">
-                        <button type="submit" class="n8n-chat-send" id="n8n-chat-send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:5px"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>Send</button>
+                        <button type="submit" class="n8n-chat-send" id="n8n-chat-send" title="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
                     </div>
                 </form>
             </div>
@@ -884,7 +947,7 @@
         panelHistory.style.display = 'none';
         tabChat.classList.add('active');
         tabHistory.classList.remove('active');
-        setTimeout(() => scrollToBottom(), 100);
+        setTimeout(() => { scrollToBottom(); showInitialSuggestions(); }, 100);
     }
 
     // Show session picker (multiple sessions found) — opens History tab pre-populated
@@ -932,16 +995,21 @@
             const msgs = await response.json();
             msgs.forEach(m => {
                 if (m.sender === 'user') {
-                    addMessage('user', m.content);
+                    addMessage('user', m.content, m.created_at);
                 } else if (m.sender === 'admin') {
-                    addMessage('admin', m.content);
+                    addMessage('admin', m.content, m.created_at);
                 } else if (m.sender === 'ai') {
-                    addMessage('ai', m.content);
+                    addMessage('ai', m.content, m.created_at);
                 }
             });
             console.log(`✅ Loaded ${msgs.length} messages for session ${sessionId}`);
             // Scroll to bottom after loading all messages
             setTimeout(() => scrollToBottom(), 100);
+            if (msgs.length === 0) {
+                setTimeout(() => showInitialSuggestions(), 120);
+            } else {
+                showHumanSuggestionOnly();
+            }
         } catch (err) {
             console.error('Failed to load session history:', err);
         }
@@ -1031,6 +1099,7 @@
             setMode('ai');
             switchTab('chat');
             addSystemMessage('New conversation started. How can we help you?');
+            showInitialSuggestions();
         } catch (err) {
             console.error('Failed to create new session:', err);
             newChatBtn.textContent = '+ New Chat';
@@ -1289,7 +1358,26 @@
         return container;
     }
 
-    function addMessage(sender, content) {
+    function formatMsgTime(ts) {
+        const d = ts ? new Date(ts) : new Date();
+        const now = new Date();
+        const diffSec = Math.floor((now - d) / 1000);
+        if (diffSec < 60) return 'Just now';
+        if (diffSec < 3600) return `${Math.floor(diffSec / 60)} min ago`;
+        const h = d.getHours();
+        const m = String(d.getMinutes()).padStart(2, '0');
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const hour12 = h % 12 || 12;
+        const timeStr = `${hour12}:${m} ${ampm}`;
+        const isToday = d.toDateString() === now.toDateString();
+        if (isToday) return `Today ${timeStr}`;
+        const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+        if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${timeStr}`;
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return `${months[d.getMonth()]} ${d.getDate()}, ${timeStr}`;
+    }
+
+    function addMessage(sender, content, timestamp = null) {
         removeTypingIndicator();
 
         // Create wrapper div for label + message
@@ -1299,12 +1387,13 @@
         // Add label
         const labelDiv = document.createElement('div');
         labelDiv.className = `n8n-msg-label n8n-msg-label-${sender}`;
+        const timeSpan = `<span class="n8n-msg-time">${formatMsgTime(timestamp)}</span>`;
         if (sender === 'user') {
-            labelDiv.innerText = 'You';
+            labelDiv.innerHTML = `You${timeSpan}`;
         } else if (sender === 'ai') {
-            labelDiv.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-1px;margin-right:4px"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>AI Bot';
+            labelDiv.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-1px;margin-right:4px"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>AI Bot' + timeSpan;
         } else if (sender === 'admin') {
-            labelDiv.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-1px;margin-right:4px"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Support Agent';
+            labelDiv.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-1px;margin-right:4px"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Support Agent' + timeSpan;
         }
         wrapperDiv.appendChild(labelDiv);
 
@@ -1335,6 +1424,137 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
+    // ============================================
+    // SUGGESTION CHIPS
+    // ============================================
+    const suggestionsEl = document.getElementById('n8n-suggestions');
+
+    function generateSuggestions(text) {
+        const suggestions = [];
+
+        // Extract specific named product mentions (e.g. "iPhone 17 Pro Max", "Samsung Galaxy S25")
+        // Require at least 2 capitalised words so generic category words (Mobile, Laptop) don't match
+        const productMatches = text.match(/\b([A-Z][a-zA-Z]{2,}([ \-][A-Z0-9][a-zA-Z0-9]+){1,4})\b/g);
+        const products = productMatches
+            ? [...new Set(productMatches)].filter(p => {
+                // Exclude generic category-level words
+                const generic = /^(Mobile|Laptop|TV|Phone|Tablet|Camera|Watch|Audio|Device|Electronic|Product|Item|Brand|Model|Type|Series|Version|Color|Colour|Option|Variant|Please|Kindly|Namaste|Thank|Hello|Welcome)$/i;
+                const words = p.trim().split(/\s+/);
+                return words.length >= 2 && !generic.test(words[0]) && p.length < 50;
+            })
+            : [];
+
+        const hasSpecificProduct = products.length > 0;
+
+        if (hasSpecificProduct) suggestions.push(`Order ${products[0].trim()}`);
+
+        // Price/deals — safe to show anytime
+        if (/\bprice\b|\bcost\b|Rs\.|NPR|₹|\$|\bdiscount\b|\boffer\b|\bdeal\b/i.test(text)) suggestions.push('Any discounts available?');
+
+        // Delivery — only when a product context exists (avoid matching "deliver info about X")
+        if (hasSpecificProduct && /\bshipping\b|\bdispatch\b|\bdeliver(y|ed)?\b|\barrive\b|\bdays?\b/i.test(text)) suggestions.push('Exact delivery time?');
+
+        // These chips only make sense when a specific product is named
+        if (hasSpecificProduct && /\bwarrant(y|ies)\b|\bguarantee\b/i.test(text)) suggestions.push('Warranty details?');
+        if (hasSpecificProduct && /\bout of stock\b|\bsold out\b/i.test(text)) suggestions.push('Notify me when available');
+        if (hasSpecificProduct && /\bspecification[s]?\b|\bspecs\b|\bprocessor\b|\bRAM\b|\bstorage\b|\bcamera\b|\bbattery\b|\bdisplay\b/i.test(text)) suggestions.push('Full specifications?');
+        if (hasSpecificProduct && /\bcolou?r\b|\bvariant\b|\boption[s]?\b/i.test(text)) suggestions.push('Available colors?');
+
+        // Payment/return — show anytime these are mentioned
+        if (/\bpayment\b|\bEMI\b|\binstallment\b|\bcredit\b|\bdebit\b/i.test(text)) suggestions.push('Payment options?');
+        if (/\breturn\b|\brefund\b|\bexchange\b|\breplace(ment)?\b/i.test(text)) suggestions.push('Return policy?');
+
+        // If nothing matched, show generic browse chips instead of misleading specific ones
+        if (suggestions.length === 0) {
+            return [
+                '📱 Show me mobiles',
+                '💻 Show me laptops',
+                '🏷️ Best deals today',
+                '__HUMAN__'
+            ];
+        }
+
+        // Max 3 contextual chips, then always add chat-with-human
+        return [...suggestions.slice(0, 3), '__HUMAN__'];
+    }
+
+    // Static greeting chips shown before any conversation starts
+    const GREETING_CHIPS = [
+        { label: '📱 Best mobiles', msg: 'Show me the best mobile phones' },
+        { label: '💻 Best laptops', msg: 'Show me the best laptops' },
+        // { label: '📺 Best TVs', msg: 'Show me the best TVs' },
+        { label: '🔋 Best earbuds', msg: 'Show me the best earbuds' },
+        { label: '🛒 New arrivals', msg: 'What are the new arrivals?' },
+        { label: '🏷️ Today\'s deals', msg: 'What are today\'s best deals?' },
+    ];
+
+    function showInitialSuggestions() {
+        if (!suggestionsEl) return;
+        suggestionsEl.innerHTML = '';
+        GREETING_CHIPS.forEach(({ label, msg }) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'n8n-suggestion-chip';
+            chip.textContent = label;
+            chip.addEventListener('click', () => {
+                clearSuggestions();
+                chatInput.value = msg;
+                chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+            });
+            suggestionsEl.appendChild(chip);
+        });
+        // Add Chat with Human chip
+        const humanChip = document.createElement('button');
+        humanChip.type = 'button';
+        humanChip.className = 'n8n-suggestion-chip human';
+        humanChip.textContent = '👤 Chat with Human';
+        humanChip.addEventListener('click', () => {
+            clearSuggestions();
+            chatInput.value = 'Chat with human';
+            chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        });
+        suggestionsEl.appendChild(humanChip);
+        suggestionsEl.classList.remove('hidden');
+    }
+
+    function showSuggestions(suggestions) {
+            if (!suggestionsEl) return;
+            if (sessionMode !== 'ai') {
+                clearSuggestions();
+                return;
+            }
+        suggestionsEl.innerHTML = '';
+        suggestions.forEach(text => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            const isHuman = text === '__HUMAN__';
+            chip.className = 'n8n-suggestion-chip' + (isHuman ? ' human' : '');
+            chip.textContent = isHuman ? '👤 Chat with Human' : text;
+            chip.addEventListener('click', () => {
+                clearSuggestions();
+                const msg = isHuman ? 'Chat with human' : text;
+                chatInput.value = msg;
+                chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+            });
+            suggestionsEl.appendChild(chip);
+        });
+        suggestionsEl.classList.remove('hidden');
+    }
+
+    function clearSuggestions() {
+        if (!suggestionsEl) return;
+        suggestionsEl.classList.add('hidden');
+        suggestionsEl.innerHTML = '';
+    }
+
+    function showHumanSuggestionOnly() {
+        if (sessionMode === 'ai') {
+            showSuggestions(['__HUMAN__']);
+        } else {
+            clearSuggestions();
+        }
+    }
+
     function showTypingIndicator() {
         if (isTyping) return;
         isTyping = true;
@@ -1359,6 +1579,7 @@
         localStorage.setItem('n8n_chat_mode', mode);
 
         if (mode === 'human') {
+            clearSuggestions();
             modeBadge.textContent = 'HUMAN';
             modeBadge.className = 'n8n-mode-badge n8n-mode-human';
             statusText.textContent = 'Connected to human support';
@@ -1449,7 +1670,9 @@
             }
 
             if (output) {
-                return { output: output };
+                // Pass through suggestions from n8n if present
+                const suggestions = Array.isArray(data.suggestions) ? data.suggestions : null;
+                return { output, ...(suggestions ? { suggestions } : {}) };
             } else {
                 console.warn('⚠️ Unexpected response format:', data);
                 // Try to stringify if it's not empty
@@ -1469,6 +1692,7 @@
     // ============================================
     chatForm.onsubmit = async (e) => {
         e.preventDefault();
+        clearSuggestions();
         const content = chatInput.value.trim();
 
         // If there's a pending pasted image, upload it (with optional caption)
@@ -1489,6 +1713,13 @@
                         removeTypingIndicator();
                         if (aiResponse && aiResponse.output) {
                             addMessage('ai', aiResponse.output);
+                                if (!aiResponse.handoff) {
+                                    if (Array.isArray(aiResponse.suggestions) && aiResponse.suggestions.length > 0) {
+                                        showSuggestions([...aiResponse.suggestions.slice(0, 2), '__HUMAN__']);
+                                    } else {
+                                        showHumanSuggestionOnly();
+                                    }
+                                }
                             if (!aiResponse.saved) await saveMessageToDB('ai', aiResponse.output);
                         }
                     } catch (err) {
@@ -1528,6 +1759,14 @@
                 if (aiResponse && aiResponse.output) {
                     // Display AI response
                     addMessage('ai', aiResponse.output);
+                    // Suggestions always come from the API (generated server-side from products DB)
+                    if (!(aiResponse.handoff || wantsHuman)) {
+                        if (Array.isArray(aiResponse.suggestions) && aiResponse.suggestions.length > 0) {
+                            showSuggestions([...aiResponse.suggestions.slice(0, 2), '__HUMAN__']);
+                        } else {
+                            showHumanSuggestionOnly();
+                        }
+                    }
 
                     // Save AI response to database only if not already saved by API
                     if (!aiResponse.saved) {
@@ -1579,6 +1818,9 @@
                     statusText.textContent = session.status === 'human'
                         ? 'Connected to human support'
                         : 'Online • Ready to help';
+                        if (session.status === 'human') {
+                            clearSuggestions();
+                        }
                     console.log(`📋 Session mode from server: ${session.status}`);
                 }
             })
@@ -1592,15 +1834,20 @@
             .then(msgs => {
                 msgs.forEach(m => {
                     if (m.sender === 'user') {
-                        addMessage('user', m.content);
+                        addMessage('user', m.content, m.created_at);
                     } else if (m.sender === 'admin') {
-                        addMessage('admin', m.content);
+                        addMessage('admin', m.content, m.created_at);
                     } else if (m.sender === 'ai') {
-                        addMessage('ai', m.content);
+                        addMessage('ai', m.content, m.created_at);
                     }
                 });
                 // Scroll to bottom after loading all messages
                 setTimeout(() => scrollToBottom(), 100);
+                if (msgs.length === 0) {
+                    setTimeout(() => showInitialSuggestions(), 120);
+                } else {
+                    showHumanSuggestionOnly();
+                }
             })
             .catch(err => console.error('Failed to load history:', err));
 
@@ -1615,6 +1862,7 @@
         socket.on('new_message', (msg) => {
             if (msg.sessionId === sessionId && msg.sender === 'admin') {
                 addMessage('admin', msg.content);
+                clearSuggestions(); // No AI chips in human mode
                 statusText.textContent = 'Agent replied • Connected';
                 setMode('human'); // Automatically switch to human mode if admin replies
             }
@@ -1624,14 +1872,16 @@
     // ============================================
     // TOGGLE HANDLERS
     // ============================================
-    chatButton.onclick = () => {
-        chatWindow.classList.toggle('open');
-        // Scroll to bottom when opening the chat
-        if (chatWindow.classList.contains('open')) {
+    function setChatOpen(isOpen) {
+        chatWindow.classList.toggle('open', isOpen);
+        chatButton.classList.toggle('hidden', isOpen);
+        if (isOpen) {
             setTimeout(() => scrollToBottom(), 100);
         }
-    };
-    chatClose.onclick = () => chatWindow.classList.remove('open');
+    }
+
+    chatButton.onclick = () => setChatOpen(true);
+    chatClose.onclick = () => setChatOpen(false);
 
     // ============================================
     // LOAD DEPENDENCIES AND INITIALIZE
