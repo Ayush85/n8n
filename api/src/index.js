@@ -29,8 +29,8 @@ app.use('/widget', express.static('widget'));
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
+        origin: '*',
+        methods: ['GET', 'POST']
     }
 });
 
@@ -42,12 +42,10 @@ const pool = new Pool({
     password: process.env.DB_PASSWORD || 'n8n_password',
     port: parseInt(process.env.DB_PORT || '5432'),
     ssl: process.env.DB_HOST && !process.env.DB_HOST.includes('localhost') ? { rejectUnauthorized: false } : false,
-    // Supabase pooler configuration
-    max: 10, // Maximum number of clients in the pool
-    idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-    connectionTimeoutMillis: 10000, // Return an error after 10 seconds if connection could not be established
-    allowExitOnIdle: false, // Don't allow the pool to exit when all clients are idle
-    // Keepalive settings to prevent connection drops
+    max: 10,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+    allowExitOnIdle: false,
     keepAlive: true,
     keepAliveInitialDelayMillis: 10000
 });
@@ -66,7 +64,7 @@ app.get('/health', (req, res) => {
 });
 
 // ============================================
-// FILE UPLOAD — DigitalOcean Spaces
+// FILE UPLOAD - DigitalOcean Spaces
 // ============================================
 const s3Client = new S3Client({
     endpoint: process.env.DO_SPACES_ENDPOINT || 'https://sgp1.digitaloceanspaces.com',
@@ -90,7 +88,7 @@ const ALLOWED_MIME_TYPES = [
 
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+    limits: { fileSize: 20 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
             cb(null, true);
@@ -100,7 +98,7 @@ const upload = multer({
     }
 });
 
-// POST /api/upload  — upload a file to DO Spaces and save message
+// POST /api/upload - upload a file to DO Spaces and save message
 app.post('/api/upload', upload.single('file'), async (req, res, next) => {
     try {
         if (!req.file) {
@@ -124,10 +122,8 @@ app.post('/api/upload', upload.single('file'), async (req, res, next) => {
         }));
 
         const fileUrl = `https://${bucket}.${region}.digitaloceanspaces.com/${key}`;
-
         logger.info(`File uploaded to Spaces: ${fileUrl}`);
 
-        // Save file message to DB so it appears in both chat and dashboard
         const filePayload = JSON.stringify({
             fileUrl,
             fileName: req.file.originalname,
@@ -135,7 +131,6 @@ app.post('/api/upload', upload.single('file'), async (req, res, next) => {
             fileSize: req.file.size
         });
 
-        // Ensure session exists
         await pool.query(
             `INSERT INTO sessions (session_id, status, metadata)
              VALUES ($1, 'ai', '{}')
@@ -143,13 +138,11 @@ app.post('/api/upload', upload.single('file'), async (req, res, next) => {
             [sessionId]
         );
 
-        // Save message
         await pool.query(
             'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
             [sessionId, 'user', filePayload]
         );
 
-        // Broadcast via socket
         io.to(sessionId).emit('new_message', {
             sessionId,
             sender: 'user',
@@ -164,206 +157,6 @@ app.post('/api/upload', upload.single('file'), async (req, res, next) => {
         next(error);
     }
 });
-
-// Helper function to generate suggestion chips from AI response + products DB
-async function generateSuggestionsFromResponse(aiText, userMessage) {
-    try {
-        const text = String(aiText || '');
-        const lower = text.toLowerCase();
-        const userLower = String(userMessage || '').toLowerCase();
-        const activeProductsWhere = `COALESCE(status, 1) = 1`;
-
-        if (!text.trim()) {
-            return [];
-        }
-
-        // Never show suggestions after human handoff text.
-        if (/support team has been notified|connect with you within 30 minutes|switched to human|human support mode/i.test(lower)) {
-            return [];
-        }
-
-        const suggestions = [];
-        const seen = new Set();
-        const pushSuggestion = (value) => {
-            const normalized = String(value || '').trim();
-            if (!normalized) return;
-            const key = normalized.toLowerCase();
-            if (seen.has(key)) return;
-            seen.add(key);
-            suggestions.push(normalized);
-        };
-
-        const MAX_SUGGESTIONS = 2;
-
-        const normalizeProductLabel = (value) => String(value || '')
-            .replace(/^[\-•*\d.\)\s]+/, '')
-            .replace(/\s*Rs\.?\s?[\d,]+.*$/i, '')
-            .replace(/\s*NPR\s?[\d,]+.*$/i, '')
-            .replace(/\s{2,}/g, ' ')
-            .trim();
-
-        const looksLikeSpecLine = (line) => /^(?:[-•*]\s*)?(price|display|processor|camera|battery|features)\b|inch|display|camera|battery|mah|mp\b|chipset|processor|snapdragon|mediatek|dimensity|storage|ram\b|wireless|charging|oled|amoled|retina|refresh rate|hz\b/i.test(line);
-        const looksLikeProductChoice = (line) => /\b(rs\.?|npr)\s?[\d,]+/i.test(line) || /\((?:\d+\+\d+|\d+\/\d+|\d+\s?gb).*\)/i.test(line);
-
-        const extractProductFromSentence = (value) => {
-            const line = String(value || '').trim();
-            const productMatch = line.match(/([A-Z][A-Za-z0-9+\-() ]{4,}?)\s+(ko price|price|is priced|costs|available|stock|variant|ram|storage)/i);
-            if (!productMatch) return '';
-            return normalizeProductLabel(productMatch[1]);
-        };
-
-        const extractExampleProducts = (value) => {
-            const examples = [];
-            const lines = String(value || '').split('\n').map(line => line.trim()).filter(Boolean);
-            for (const line of lines) {
-                if (!/for example|example:|jastai|जस्तै/i.test(line)) continue;
-                const examplePart = line
-                    .replace(/^.*?(for example|example:|jastai|जस्तै)\s*:?/i, '')
-                    .replace(/kun model.*$/i, '')
-                    .replace(/adi\.?$/i, '')
-                    .trim();
-                const candidates = examplePart
-                    .split(/,|\s+or\s+/i)
-                    .map(item => normalizeProductLabel(item))
-                    .filter(item => item.length >= 5 && /[a-z]/i.test(item) && /\d|iphone|samsung|redmi|xiaomi|oppo|vivo|realme|oneplus|honor|pixel|dell|hp|lenovo|asus|acer|msi|sony|apple/i.test(item));
-                candidates.forEach(item => examples.push(item));
-            }
-            return [...new Set(examples)];
-        };
-
-        const exampleProducts = extractExampleProducts(text);
-        if (exampleProducts.length > 0) {
-            exampleProducts.slice(0, MAX_SUGGESTIONS).forEach(pushSuggestion);
-            return suggestions.slice(0, MAX_SUGGESTIONS);
-        }
-
-        const lastQuestionBlock = text.split(/\?|।/).map(part => part.trim()).filter(Boolean).slice(-2).join(' ').toLowerCase();
-
-        const optionLines = text
-            .split('\n')
-            .map(line => line.trim())
-            .filter(line => (/^[\-•*]|^\d+[.)]/.test(line)) && looksLikeProductChoice(line) && !looksLikeSpecLine(line));
-        optionLines
-            .map(normalizeProductLabel)
-            .filter(Boolean)
-            .slice(0, MAX_SUGGESTIONS)
-            .forEach(pushSuggestion);
-        if (suggestions.length >= MAX_SUGGESTIONS) {
-            return suggestions.slice(0, MAX_SUGGESTIONS);
-        }
-
-        const storageMatches = [...new Set((text.match(/\b\d{2,4}\s?GB\b/ig) || []).map(item => item.toUpperCase().replace(/\s+/g, ' ')))];
-        const userStorageMatches = [...new Set((userLower.match(/\b\d{2,4}\s?gb\b/ig) || []).map(item => item.toUpperCase().replace(/\s+/g, ' ')))];
-        const colorMatches = [...new Set((text.match(/\b(Black|White|Blue|Green|Silver|Gold|Purple|Pink|Gray|Grey|Natural Titanium|Titanium Black|Titanium White|Titanium Silver)\b/ig) || []).map(item => item.replace(/\b\w/g, ch => ch.toUpperCase())))];
-        const currentProduct = extractProductFromSentence(text);
-
-        const keywordSources = `${userLower} ${lower}`;
-        const phoneContext = /mobile|phone|smartphone|iphone|samsung|redmi|xiaomi|oppo|vivo|realme|oneplus|honor/i.test(keywordSources);
-
-        if (userStorageMatches.length > 0 && phoneContext) {
-            for (const storage of userStorageMatches.slice(0, 2)) {
-                const result = await pool.query(
-                    `SELECT name FROM products
-                     WHERE ${activeProductsWhere}
-                       AND (LOWER(name) LIKE $1 OR LOWER(description) LIKE $1)
-                     ORDER BY (CASE WHEN COALESCE(quantity, 0) > 0 THEN 1 ELSE 0 END) DESC,
-                              COALESCE(is_featured, 0) DESC,
-                              COALESCE(average_rating, 0) DESC,
-                              id DESC
-                     LIMIT 3`,
-                    [`%${storage.toLowerCase()}%`]
-                );
-                result.rows
-                    .map(row => normalizeProductLabel(row.name))
-                    .forEach(pushSuggestion);
-                if (suggestions.length >= MAX_SUGGESTIONS) {
-                    return suggestions.slice(0, MAX_SUGGESTIONS);
-                }
-            }
-        }
-
-        if (/cash\s+ki\s+emi|cash or emi|emi or cash/i.test(lastQuestionBlock)) {
-            pushSuggestion('Cash');
-            pushSuggestion('EMI');
-            return suggestions.slice(0, MAX_SUGGESTIONS);
-        }
-
-        if (/kun model|which model|model ma interest|model choose/i.test(lastQuestionBlock) && currentProduct) {
-            pushSuggestion('More details');
-            pushSuggestion('Other variants');
-            return suggestions.slice(0, MAX_SUGGESTIONS);
-        }
-
-        if (/\bemi\b|installment/i.test(lastQuestionBlock || lower)) pushSuggestion(currentProduct ? 'EMI option' : 'Show EMI details');
-        if (/\bcash\b|cash ki emi|cash price/i.test(lastQuestionBlock || lower)) pushSuggestion(currentProduct ? 'Cash price' : 'Show cash price');
-        if (/variant|storage|ram/i.test(lower)) {
-            if (storageMatches.length > 0) {
-                storageMatches.slice(0, 3).forEach(item => pushSuggestion(`${item} option`));
-            } else {
-                pushSuggestion(currentProduct ? 'Other variants' : 'Show available variants');
-            }
-        }
-        if (/color|colour/i.test(lower)) {
-            if (colorMatches.length > 0) {
-                colorMatches.slice(0, 2).forEach(item => pushSuggestion(`${item} color`));
-            } else {
-                pushSuggestion(currentProduct ? 'Available colors' : 'Show available colors');
-            }
-        }
-        if (/stock|available|out of stock|sold out/i.test(lower)) pushSuggestion(currentProduct ? 'Stock status' : 'Check stock availability');
-        if (/warranty|guarantee/i.test(lower)) pushSuggestion(currentProduct ? 'Warranty details' : 'Show warranty details');
-        if (/delivery|shipping|dispatch|arrive/i.test(lower)) pushSuggestion(currentProduct ? 'Delivery time' : 'Show delivery time');
-        if (/price|discount|offer|deal|cost|rs\.|npr/i.test(lower) && !currentProduct) pushSuggestion('Show latest price');
-
-        if (suggestions.length > 0) {
-            return suggestions.slice(0, MAX_SUGGESTIONS);
-        }
-
-        // If the AI is asking the user to choose a product, try to suggest products from the user's current brand/category context.
-        const askingForProduct = /kun product|which product|kun item|कुन|specify|product ma interest|brand|model|type of/i.test(lower);
-        const searchTerms = [];
-        const brandMatches = keywordSources.match(/\b(iphone|samsung|redmi|xiaomi|oppo|vivo|realme|oneplus|honor|google pixel|pixel|dell|hp|lenovo|asus|acer|msi|apple|sony)\b/gi) || [];
-        brandMatches.forEach(match => searchTerms.push(match.toLowerCase()));
-
-        const categoryKeywords = [
-            { pattern: /mobile|phone|smartphone/i, category: 'mobile' },
-            { pattern: /laptop|notebook|computer/i, category: 'laptop' },
-            { pattern: /\btv\b|television/i, category: 'tv' },
-            { pattern: /earbud|headphone|earphone|audio/i, category: 'audio' },
-            { pattern: /tablet|ipad/i, category: 'tablet' },
-        ];
-        for (const { pattern, category } of categoryKeywords) {
-            if (pattern.test(keywordSources)) {
-                searchTerms.push(category);
-            }
-        }
-
-        if (askingForProduct && searchTerms.length > 0) {
-            for (const term of [...new Set(searchTerms)]) {
-                const result = await pool.query(
-                    `SELECT name FROM products
-                     WHERE ${activeProductsWhere}
-                       AND (LOWER(name) LIKE $1 OR LOWER(description) LIKE $1)
-                     ORDER BY (CASE WHEN COALESCE(quantity, 0) > 0 THEN 1 ELSE 0 END) DESC,
-                              COALESCE(is_featured, 0) DESC,
-                              COALESCE(average_rating, 0) DESC,
-                              id DESC
-                     LIMIT 3`,
-                    [`%${term}%`]
-                );
-                result.rows.forEach(row => pushSuggestion(normalizeProductLabel(row.name)));
-                if (suggestions.length >= MAX_SUGGESTIONS) {
-                    return suggestions.slice(0, MAX_SUGGESTIONS);
-                }
-            }
-        }
-
-        return suggestions.slice(0, MAX_SUGGESTIONS);
-    } catch (err) {
-        logger.error('Error generating suggestions:', err);
-        return [];
-    }
-}
 
 // N8N Webhook URL (from environment or default)
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;

@@ -4,7 +4,6 @@
     // ============================================
     const CONFIG = {
         API_URL: window.N8N_CHAT_API_URL || 'http://localhost:3001',
-        N8N_WEBHOOK_URL: window.N8N_CHAT_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/9a20ec1a-f508-419f-9194-ba933299ddff/chat',
         CLIENT_ID: window.N8N_CHAT_CLIENT_ID || 'client_1',
         SITE_NAME: window.N8N_CHAT_SITE_NAME || 'Fatafat Sewa',
         PRIMARY_COLOR: window.N8N_CHAT_PRIMARY_COLOR || '#0f67b2',
@@ -19,15 +18,7 @@
     let sessionId = localStorage.getItem('n8n_chat_session_id') || 'sess_' + Math.random().toString(36).substr(2, 9);
     let sessionMode = localStorage.getItem('n8n_chat_mode') || 'ai'; // 'ai' or 'human'
     let isTyping = false;
-    let isSessionLoaded = false; // Track if session status is loaded from server
     let userInfo = JSON.parse(localStorage.getItem('n8n_chat_user_info') || 'null'); // {email, phone, name}
-
-    // Debug log
-    console.log('🚀 N8N Chat Widget Initialized');
-    console.log('📋 Session ID:', sessionId);
-    console.log('🤖 Session Mode:', sessionMode);
-    console.log('🔗 N8N Webhook:', CONFIG.N8N_WEBHOOK_URL);
-    console.log('🌐 API URL:', CONFIG.API_URL);
 
     // Global reset function (call from console: n8nChatReset())
     window.n8nChatReset = function () {
@@ -965,8 +956,6 @@
 
     // Switch to a different session (for returning users)
     async function switchToSession(newSessionId, status = 'ai') {
-        console.log(`🔄 Switching from session ${sessionId} to ${newSessionId}`);
-
         // Leave old socket room if connected
         if (socket) {
             socket.emit('leave_session', sessionId);
@@ -1002,7 +991,6 @@
                     addMessage('ai', m.content, m.created_at);
                 }
             });
-            console.log(`✅ Loaded ${msgs.length} messages for session ${sessionId}`);
             // Scroll to bottom after loading all messages
             setTimeout(() => scrollToBottom(), 100);
             if (msgs.length === 0) {
@@ -1228,23 +1216,6 @@
     const newChatBtnChat = document.getElementById('n8n-new-chat-btn-chat');
     if (newChatBtnChat) newChatBtnChat.addEventListener('click', startNewChat);
 
-    // ✏️ Header "New Chat" button — start a fresh session from within the chat
-    const headerNewChatBtn = document.getElementById('n8n-header-new-chat');
-    if (headerNewChatBtn) headerNewChatBtn.addEventListener('click', startNewChat);
-
-    // ☰ Header "My Chats" button — go back to session picker
-    const headerMyChatsBtn = document.getElementById('n8n-header-my-chats');
-    if (headerMyChatsBtn) headerMyChatsBtn.addEventListener('click', async () => {
-        if (!userInfo?.contact) return;
-        try {
-            const res = await fetch(`${CONFIG.API_URL}/api/sessions/by-contact/${encodeURIComponent(userInfo.contact)}`);
-            const data = await res.json();
-            showSessionPicker(data.sessions || []);
-        } catch (err) {
-            console.error('Failed to load sessions:', err);
-        }
-    });
-
     // Pre-chat form submission handler
     prechatForm.onsubmit = async (e) => {
         e.preventDefault();
@@ -1279,14 +1250,12 @@
 
         // Fetch ALL sessions for this contact
         try {
-            console.log(`🔍 Fetching sessions for contact: ${contact}`);
             const response = await fetch(`${CONFIG.API_URL}/api/sessions/by-contact/${encodeURIComponent(contact)}`);
             const data = await response.json();
             const sessions = data.sessions || [];
 
             if (sessions.length === 1) {
                 // Exactly one session — restore it directly (no picker needed)
-                console.log(`✅ Single session found, restoring: ${sessions[0].session_id}`);
                 await switchToSession(sessions[0].session_id, sessions[0].status || 'ai');
                 showChatInterface();
                 return;
@@ -1294,13 +1263,11 @@
 
             if (sessions.length > 1) {
                 // Multiple sessions — show picker
-                console.log(`📋 ${sessions.length} sessions found, showing picker`);
                 showSessionPicker(sessions);
                 return;
             }
 
             // No existing sessions — new user flow
-            console.log('📝 No existing sessions, starting fresh');
         } catch (err) {
             console.error('Failed to fetch sessions:', err);
         } finally {
@@ -1429,55 +1396,6 @@
     // ============================================
     const suggestionsEl = document.getElementById('n8n-suggestions');
 
-    function generateSuggestions(text) {
-        const suggestions = [];
-
-        // Extract specific named product mentions (e.g. "iPhone 17 Pro Max", "Samsung Galaxy S25")
-        // Require at least 2 capitalised words so generic category words (Mobile, Laptop) don't match
-        const productMatches = text.match(/\b([A-Z][a-zA-Z]{2,}([ \-][A-Z0-9][a-zA-Z0-9]+){1,4})\b/g);
-        const products = productMatches
-            ? [...new Set(productMatches)].filter(p => {
-                // Exclude generic category-level words
-                const generic = /^(Mobile|Laptop|TV|Phone|Tablet|Camera|Watch|Audio|Device|Electronic|Product|Item|Brand|Model|Type|Series|Version|Color|Colour|Option|Variant|Please|Kindly|Namaste|Thank|Hello|Welcome)$/i;
-                const words = p.trim().split(/\s+/);
-                return words.length >= 2 && !generic.test(words[0]) && p.length < 50;
-            })
-            : [];
-
-        const hasSpecificProduct = products.length > 0;
-
-        if (hasSpecificProduct) suggestions.push(`Order ${products[0].trim()}`);
-
-        // Price/deals — safe to show anytime
-        if (/\bprice\b|\bcost\b|Rs\.|NPR|₹|\$|\bdiscount\b|\boffer\b|\bdeal\b/i.test(text)) suggestions.push('Any discounts available?');
-
-        // Delivery — only when a product context exists (avoid matching "deliver info about X")
-        if (hasSpecificProduct && /\bshipping\b|\bdispatch\b|\bdeliver(y|ed)?\b|\barrive\b|\bdays?\b/i.test(text)) suggestions.push('Exact delivery time?');
-
-        // These chips only make sense when a specific product is named
-        if (hasSpecificProduct && /\bwarrant(y|ies)\b|\bguarantee\b/i.test(text)) suggestions.push('Warranty details?');
-        if (hasSpecificProduct && /\bout of stock\b|\bsold out\b/i.test(text)) suggestions.push('Notify me when available');
-        if (hasSpecificProduct && /\bspecification[s]?\b|\bspecs\b|\bprocessor\b|\bRAM\b|\bstorage\b|\bcamera\b|\bbattery\b|\bdisplay\b/i.test(text)) suggestions.push('Full specifications?');
-        if (hasSpecificProduct && /\bcolou?r\b|\bvariant\b|\boption[s]?\b/i.test(text)) suggestions.push('Available colors?');
-
-        // Payment/return — show anytime these are mentioned
-        if (/\bpayment\b|\bEMI\b|\binstallment\b|\bcredit\b|\bdebit\b/i.test(text)) suggestions.push('Payment options?');
-        if (/\breturn\b|\brefund\b|\bexchange\b|\breplace(ment)?\b/i.test(text)) suggestions.push('Return policy?');
-
-        // If nothing matched, show generic browse chips instead of misleading specific ones
-        if (suggestions.length === 0) {
-            return [
-                '📱 Show me mobiles',
-                '💻 Show me laptops',
-                '🏷️ Best deals today',
-                '__HUMAN__'
-            ];
-        }
-
-        // Max 3 contextual chips, then always add chat-with-human
-        return [...suggestions.slice(0, 3), '__HUMAN__'];
-    }
-
     // Static greeting chips shown before any conversation starts
     const GREETING_CHIPS = [
         { label: '📱 Best mobiles', msg: 'Show me the best mobile phones' },
@@ -1518,11 +1436,11 @@
     }
 
     function showSuggestions(suggestions) {
-            if (!suggestionsEl) return;
-            if (sessionMode !== 'ai') {
-                clearSuggestions();
-                return;
-            }
+        if (!suggestionsEl) return;
+        if (sessionMode !== 'ai') {
+            clearSuggestions();
+            return;
+        }
         suggestionsEl.innerHTML = '';
         suggestions.forEach(text => {
             const chip = document.createElement('button');
@@ -1633,8 +1551,6 @@
     // ============================================
     async function sendToN8nAI(message) {
         try {
-            console.log('📤 Sending to n8n via proxy:', { message });
-
             // Use local proxy to avoid CORS issues
             const response = await fetch(`${CONFIG.API_URL}/api/chat`, {
                 method: 'POST',
@@ -1657,7 +1573,6 @@
             }
 
             const data = await response.json();
-            console.log('🤖 AI Response:', data);
 
             // Handle response format - could be {output: "..."} or [{output: "..."}] or {text: "..."} or {result: "..."}
             let output = '';
@@ -1818,10 +1733,9 @@
                     statusText.textContent = session.status === 'human'
                         ? 'Connected to human support'
                         : 'Online • Ready to help';
-                        if (session.status === 'human') {
-                            clearSuggestions();
-                        }
-                    console.log(`📋 Session mode from server: ${session.status}`);
+                    if (session.status === 'human') {
+                        clearSuggestions();
+                    }
                 }
             })
             .catch(err => {
