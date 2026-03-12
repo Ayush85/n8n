@@ -65,6 +65,23 @@ function formatMsgTime(ts) {
         : format(d, 'MMM d, HH:mm');
 }
 
+function formatAdminDateTime(ts) {
+    if (!ts) return '—';
+
+    const date = new Date(ts);
+    if (Number.isNaN(date.getTime())) return '—';
+
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday = date.toDateString() === yesterday.toDateString();
+
+    if (isToday) return `Today, ${format(date, 'HH:mm')}`;
+    if (isYesterday) return `Yesterday, ${format(date, 'HH:mm')}`;
+    return format(date, 'MMM d, yyyy, HH:mm');
+}
+
 // Helper: parse a file-message payload from a message content string
 function parseFileMsg(content) {
     try {
@@ -431,7 +448,7 @@ function App() {
                                             <div className="flex justify-between items-center mb-0.5">
                                                 <h3 className="font-semibold truncate text-[14px] text-white tracking-tight">{session.customer_name || 'Anonymous'}</h3>
                                                 <span className="text-[10px] text-slate-500 font-medium">
-                                                    {session.last_message_at ? format(new Date(session.last_message_at), 'HH:mm') : ''}
+                                                    {formatAdminDateTime(session.last_message_at)}
                                                 </span>
                                             </div>
                                             {(session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone) &&
@@ -488,7 +505,7 @@ function App() {
                                                     <span className="text-[10px] text-slate-600 font-mono mt-0.5 shrink-0">#{idx + 1}</span>
                                                     <div className="flex-1 min-w-0">
                                                         <p className="text-xs text-slate-300 line-clamp-2" title={session.last_message || ''}>{session.last_message || 'Started a conversation'}</p>
-                                                        <p className="text-[10px] text-slate-500">{session.last_message_at ? format(new Date(session.last_message_at), 'MMM d, HH:mm') : ''}</p>
+                                                        <p className="text-[10px] text-slate-500">{formatAdminDateTime(session.last_message_at)}</p>
                                                     </div>
                                                     {activeSession?.session_id === session.session_id && (
                                                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0 mt-1 shadow-[0_0_6px_rgba(59,130,246,0.8)]"></div>
@@ -811,9 +828,7 @@ function App() {
                                                     {/* Last Active */}
                                                     <div className="flex items-center">
                                                         <span className="text-xs text-slate-400">
-                                                            {session.last_message_at
-                                                                ? format(new Date(session.last_message_at), 'MMM d, HH:mm')
-                                                                : <span className="text-slate-600">—</span>}
+                                                            {formatAdminDateTime(session.last_message_at)}
                                                         </span>
                                                     </div>
 
@@ -821,7 +836,7 @@ function App() {
                                                     <div className="flex items-center">
                                                         <span className="text-xs text-slate-500">
                                                             {group.earliestAt && isFinite(group.earliestAt)
-                                                                ? format(new Date(group.earliestAt), 'MMM d')
+                                                                ? formatAdminDateTime(group.earliestAt)
                                                                 : '—'}
                                                         </span>
                                                     </div>
@@ -851,12 +866,12 @@ function App() {
                                                             </div>
                                                             <div>
                                                                 <span className="text-xs text-slate-500">
-                                                                    {sub.last_message_at ? format(new Date(sub.last_message_at), 'MMM d, HH:mm') : '—'}
+                                                                    {formatAdminDateTime(sub.last_message_at)}
                                                                 </span>
                                                             </div>
                                                             <div>
                                                                 <span className="text-xs text-slate-600">
-                                                                    {sub.created_at ? format(new Date(sub.created_at), 'MMM d') : '—'}
+                                                                    {formatAdminDateTime(sub.created_at)}
                                                                 </span>
                                                             </div>
                                                         </div>
@@ -1555,7 +1570,7 @@ function App() {
                                                             {sessionSummary.createdAt && (
                                                                 <div className="flex justify-between">
                                                                     <span className="text-slate-500">Started</span>
-                                                                    <span className="text-slate-300">{format(new Date(sessionSummary.createdAt), 'MMM dd, HH:mm')}</span>
+                                                                    <span className="text-slate-300">{formatAdminDateTime(sessionSummary.createdAt)}</span>
                                                                 </div>
                                                             )}
                                                             {sessionSummary.tokensUsed > 0 && (
@@ -1694,7 +1709,7 @@ function App() {
                                                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${s.status === 'ai' ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
                                                             {s.status?.toUpperCase()} MODE
                                                         </span>
-                                                        <span className="text-xs text-slate-500 whitespace-nowrap">{s.created_at ? format(new Date(s.created_at), 'MMM dd, HH:mm') : '—'}</span>
+                                                        <span className="text-xs text-slate-500 whitespace-nowrap">{formatAdminDateTime(s.created_at)}</span>
                                                     </div>
                                                 </div>
                                             ))
@@ -1759,7 +1774,7 @@ function App() {
                                                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium block mb-1 ${s.status === 'ai' ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
                                                         {s.status?.toUpperCase()}
                                                     </span>
-                                                    <p className="text-xs text-green-400">{s.last_message_at || s.updated_at ? format(new Date(s.last_message_at || s.updated_at), 'HH:mm') : '—'}</p>
+                                                    <p className="text-xs text-green-400">{formatAdminDateTime(s.last_message_at || s.updated_at)}</p>
                                                 </div>
                                             </div>
                                         ))}
@@ -1852,7 +1867,7 @@ function App() {
                                                                 <p className="text-xs font-medium text-white truncate">{s.customer_name || 'Anonymous'}</p>
                                                                 <p className="text-[10px] text-slate-500 font-mono truncate">{s.session_id}</p>
                                                             </div>
-                                                            <span className="text-[10px] text-slate-400 shrink-0 ml-3">{s.created_at ? format(new Date(s.created_at), 'MMM dd') : '—'}</span>
+                                                            <span className="text-[10px] text-slate-400 shrink-0 ml-3">{formatAdminDateTime(s.created_at)}</span>
                                                         </div>
                                                     ))}
                                                 </div>

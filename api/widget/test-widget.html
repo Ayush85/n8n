@@ -36,9 +36,8 @@
         <p>Try sending a message!</p>
     </div>
 
-    <!-- n8n Chat Widget: load config first (reads API URL from server .env) -->
-    <script src="http://localhost:3001/widget/config.js"></script>
-    <script src="http://localhost:3001/widget/chat-widget.js"></script>
+    <!-- n8n Chat Widget: auto-detects API domain, works on localhost and production -->
+    <script src="/widget/chat-widget.js"></script>
 </body>
 
 </html>
