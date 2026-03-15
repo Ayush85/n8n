@@ -1,13 +1,34 @@
 (function () {
     // ============================================
-    // CONFIGURATION - Customize these values
+    // CONFIGURATION - Auto-detect API URL
     // ============================================
+    const getApiUrl = () => {
+        // 1. Check if explicitly set
+        if (window.N8N_CHAT_API_URL) return window.N8N_CHAT_API_URL;
+        
+        // 2. Try to detect from the script's src (works for third-party embeds)
+        const scripts = document.querySelectorAll('script');
+        for (const script of scripts) {
+            if (script.src && script.src.includes('chat-widget.js')) {
+                const url = new URL(script.src);
+                return `${url.protocol}//${url.host}`;
+            }
+        }
+        
+        // 3. Localhost default
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            return 'http://localhost:3001';
+        }
+        
+        // 4. Fallback to current domain
+        return window.location.origin;
+    };
+
     const CONFIG = {
-        API_URL: window.N8N_CHAT_API_URL || 'https://staging.chat.aydexis.com',
-        N8N_WEBHOOK_URL: window.N8N_CHAT_WEBHOOK_URL || 'https://n8n.aydexis.com/webhook/9a20ec1a-f508-419f-9194-ba933299ddff/chat',
+        API_URL: getApiUrl(),
         CLIENT_ID: window.N8N_CHAT_CLIENT_ID || 'client_1',
         SITE_NAME: window.N8N_CHAT_SITE_NAME || 'Fatafat Sewa',
-        PRIMARY_COLOR: window.N8N_CHAT_PRIMARY_COLOR || '#2563eb',
+        PRIMARY_COLOR: window.N8N_CHAT_PRIMARY_COLOR || '#0f67b2',
         SOCKET_IO_CDN: 'https://cdn.socket.io/4.7.2/socket.io.min.js',
         MARKED_CDN: 'https://cdn.jsdelivr.net/npm/marked/marked.min.js',
     };
@@ -19,15 +40,7 @@
     let sessionId = localStorage.getItem('n8n_chat_session_id') || 'sess_' + Math.random().toString(36).substr(2, 9);
     let sessionMode = localStorage.getItem('n8n_chat_mode') || 'ai'; // 'ai' or 'human'
     let isTyping = false;
-    let isSessionLoaded = false; // Track if session status is loaded from server
     let userInfo = JSON.parse(localStorage.getItem('n8n_chat_user_info') || 'null'); // {email, phone, name}
-
-    // Debug log
-    console.log('🚀 N8N Chat Widget Initialized');
-    console.log('📋 Session ID:', sessionId);
-    console.log('🤖 Session Mode:', sessionMode);
-    console.log('🔗 N8N Webhook:', CONFIG.N8N_WEBHOOK_URL);
-    console.log('🌐 API URL:', CONFIG.API_URL);
 
     // Global reset function (call from console: n8nChatReset())
     window.n8nChatReset = function () {
@@ -66,13 +79,18 @@
         }
         #n8n-chat-button:hover { transform: scale(1.08); box-shadow: 0 6px 24px rgba(37, 99, 235, 0.5); }
         #n8n-chat-button svg { fill: white; width: 28px; height: 28px; }
+        #n8n-chat-button.hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.85);
+        }
         
         #n8n-chat-window {
             position: absolute;
             bottom: 80px;
             right: 0;
-            width: 380px;
-            height: 550px;
+            width: 400px;
+            height: 680px;
             background: #ffffff;
             border-radius: 20px;
             box-shadow: 0 12px 40px rgba(0,0,0,0.2);
@@ -81,7 +99,11 @@
             overflow: hidden;
             border: 1px solid #e2e8f0;
         }
-        #n8n-chat-window.open { display: flex; animation: slideUp 0.3s ease; }
+        #n8n-chat-window.open {
+            display: flex;
+            bottom: 0;
+            animation: slideUp 0.3s ease;
+        }
         @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         
         .n8n-chat-header {
@@ -124,9 +146,53 @@
             padding: 16px;
             border-top: 1px solid #e2e8f0;
             display: flex;
-            gap: 10px;
+            flex-direction: column;
+            gap: 8px;
             background: #ffffff;
         }
+        .n8n-input-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        /* Paste preview strip */
+        .n8n-paste-preview {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #f0f7ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 10px;
+            padding: 8px 10px;
+            font-size: 12px;
+            color: #1e40af;
+        }
+        .n8n-paste-preview img {
+            width: 48px;
+            height: 48px;
+            object-fit: cover;
+            border-radius: 6px;
+            flex-shrink: 0;
+        }
+        .n8n-paste-preview-name {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-weight: 600;
+        }
+        .n8n-paste-cancel {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            color: #64748b;
+            padding: 2px 4px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+        .n8n-paste-cancel:hover { color: #ef4444; }
         .n8n-chat-input {
             flex: 1;
             padding: 12px 16px;
@@ -143,14 +209,17 @@
             background: ${CONFIG.PRIMARY_COLOR};
             color: white;
             border: none;
-            padding: 12px 20px;
+            width: 44px;
+            height: 44px;
             border-radius: 12px;
             cursor: pointer;
-            font-weight: 600;
-            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
             transition: all 0.2s;
         }
-        .n8n-chat-send:hover { background: #1d4ed8; transform: scale(1.02); }
+        .n8n-chat-send:hover { background: #1d4ed8; transform: scale(1.05); }
         .n8n-chat-send:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
         
         .n8n-msg {
@@ -209,6 +278,56 @@
             text-align: left;
             color: #6366f1;
         }
+        .n8n-msg-time {
+            font-size: 10px;
+            font-weight: 400;
+            opacity: 0.5;
+            margin-left: 6px;
+            white-space: nowrap;
+        }
+
+        /* ====== SUGGESTION CHIPS ====== */
+        .n8n-suggestions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding: 8px 14px 6px;
+            flex-shrink: 0;
+            background: #ffffff;
+            border-top: 1px solid #f1f5f9;
+        }
+        .n8n-suggestions.hidden { display: none; }
+        .n8n-suggestion-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: #f0f7ff;
+            border: 1.5px solid #bfdbfe;
+            color: #1e40af;
+            border-radius: 20px;
+            padding: 6px 13px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.15s;
+            line-height: 1;
+            font-family: inherit;
+        }
+        .n8n-suggestion-chip:hover {
+            background: #dbeafe;
+            border-color: #93c5fd;
+            transform: translateY(-1px);
+        }
+        .n8n-suggestion-chip.human {
+            background: #fff1f2;
+            border-color: #fecdd3;
+            color: #be123c;
+        }
+        .n8n-suggestion-chip.human:hover {
+            background: #ffe4e6;
+            border-color: #fda4af;
+        }
         .n8n-msg-wrapper {
             display: flex;
             flex-direction: column;
@@ -253,6 +372,59 @@
         }
         .n8n-mode-ai { background: rgba(16, 185, 129, 0.2); color: #059669; }
         .n8n-mode-human { background: rgba(239, 68, 68, 0.2); color: #dc2626; }
+
+        /* File attachment button */
+        .n8n-attach-btn {
+            background: #f1f5f9;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 10px 12px;
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        .n8n-attach-btn:hover { background: #e2e8f0; border-color: #cbd5e1; }
+        .n8n-attach-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* File message rendering */
+        .n8n-file-msg { display: flex; flex-direction: column; gap: 6px; }
+        .n8n-file-img {
+            max-width: 220px;
+            max-height: 180px;
+            border-radius: 10px;
+            object-fit: cover;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .n8n-file-img:hover { opacity: 0.85; }
+        .n8n-file-doc {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255,255,255,0.25);
+            border: 1px solid rgba(255,255,255,0.4);
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-size: 13px;
+            text-decoration: none;
+            color: inherit;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        .n8n-msg-ai .n8n-file-doc, .n8n-msg-admin .n8n-file-doc {
+            background: rgba(0,0,0,0.06);
+            border-color: rgba(0,0,0,0.12);
+            color: #1e293b;
+        }
+        .n8n-file-doc:hover { background: rgba(255,255,255,0.4); }
+        .n8n-file-name { max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .n8n-upload-progress {
+            font-size: 12px;
+            opacity: 0.8;
+            font-style: italic;
+        }
 
         /* Markdown Styles */
         .n8n-msg p { margin: 0 0 8px 0; }
@@ -357,11 +529,154 @@
             transform: none;
         }
 
-        /* ====== RESPONSIVE: Tablet (≤768px) ====== */
+        /* ====================================
+           TAB BAR
+        ====================================== */
+        .n8n-tab-bar {
+            display: none;
+            align-items: stretch;
+            background: #fff;
+            border-bottom: 2px solid #e2e8f0;
+            flex-shrink: 0;
+        }
+        .n8n-tab-bar.visible { display: flex; }
+        .n8n-tab {
+            flex: 1;
+            padding: 10px 0;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #94a3b8;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+            letter-spacing: 0.01em;
+        }
+        .n8n-tab:hover { color: #475569; }
+        .n8n-tab.active { color: #0f67b2; border-bottom-color: #0f67b2; }
+        .n8n-tab-panel { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+        .n8n-tab-panel.active { display: flex; }
+
+        /* ====================================
+           CHAT ACTION BAR (top of Chat panel)
+        ====================================== */
+        .n8n-chat-action-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 14px;
+            background: #f8fafc;
+            border-bottom: 1px solid #e8eef4;
+            flex-shrink: 0;
+        }
+        .n8n-active-session-label {
+            flex: 1;
+            font-size: 11px;
+            color: #64748b;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* ====================================
+           HISTORY PANEL
+        ====================================== */
+        .n8n-history-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            border-bottom: 1px solid #e8eef4;
+            background: #f8fafc;
+            flex-shrink: 0;
+        }
+        .n8n-history-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        /* Shared New Chat button */
+        .n8n-new-chat-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: #0f67b2;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.15s;
+            white-space: nowrap;
+        }
+        .n8n-new-chat-btn:hover { background: #0a56a0; transform: scale(1.02); }
+        .n8n-new-chat-btn:active { transform: scale(0.98); }
+        .n8n-new-chat-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
+        /* Session list */
+        .n8n-session-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 4px 0;
+        }
+        .n8n-session-item {
+            display: flex;
+            flex-direction: column;
+            padding: 11px 16px;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f5f9;
+            transition: background 0.15s;
+            gap: 4px;
+        }
+        .n8n-session-item:hover { background: #f0f7ff; }
+        .n8n-session-item.active-session {
+            background: #e8f4ff;
+            border-left: 3px solid #0f67b2;
+            padding-left: 13px;
+        }
+        .n8n-session-item:last-child { border-bottom: none; }
+        .n8n-session-item-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e293b;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .n8n-session-item-meta {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 11px;
+            color: #94a3b8;
+        }
+        .n8n-session-item-badge {
+            padding: 2px 6px;
+            border-radius: 5px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .n8n-badge-ai   { background: rgba(16,185,129,0.12); color: #059669; }
+        .n8n-badge-human { background: rgba(239,68,68,0.12); color: #dc2626; }
+        .n8n-session-empty {
+            padding: 40px 16px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 13px;
+            line-height: 1.6;
+        }
         @media (max-width: 768px) {
             #n8n-chat-window {
-                width: 340px;
-                height: 500px;
+                width: 360px;
+                height: 620px;
             }
         }
 
@@ -417,7 +732,9 @@
             .n8n-chat-input-area {
                 padding: 10px 12px;
                 padding-bottom: max(10px, env(safe-area-inset-bottom));
-                gap: 8px;
+                gap: 6px;
+            }
+            .n8n-input-row {
                 align-items: center;
             }
             .n8n-chat-input {
@@ -427,10 +744,10 @@
                 font-size: 16px; /* Prevents iOS zoom on focus */
             }
             .n8n-chat-send {
-                padding: 10px 18px;
-                font-size: 14px;
+                width: 44px;
+                height: 44px;
+                padding: 0;
                 border-radius: 12px;
-                white-space: nowrap;
                 flex-shrink: 0;
             }
             .n8n-msg {
@@ -485,16 +802,24 @@
     widget.id = 'n8n-chat-widget';
     widget.innerHTML = `
         <div id="n8n-chat-window">
+            <!-- Header (always visible) -->
             <div class="n8n-chat-header">
                 <div>
                     <div class="n8n-chat-header-title">${CONFIG.SITE_NAME}<span id="n8n-mode-badge" class="n8n-mode-badge n8n-mode-ai">AI</span></div>
-                    <div class="n8n-chat-header-status" id="n8n-status">Online • Ready to help</div>
+                    <div class="n8n-chat-header-status" id="n8n-status">Online &bull; Ready to help</div>
                 </div>
                 <button class="n8n-chat-close" id="n8n-chat-close">&times;</button>
             </div>
-            <!-- Pre-chat Form -->
+
+            <!-- Tab Bar (hidden until user logs in) -->
+            <div class="n8n-tab-bar" id="n8n-tab-bar">
+                <button class="n8n-tab active" id="n8n-tab-chat" data-tab="chat"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:5px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat</button>
+                <button class="n8n-tab" id="n8n-tab-history" data-tab="history"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>History</button>
+            </div>
+
+            <!-- Pre-chat Form (shown to new users) -->
             <div id="n8n-prechat-container" class="n8n-prechat-form" style="${userInfo ? 'display: none;' : ''}">
-                <div class="n8n-prechat-title">👋 Welcome!</div>
+                <div class="n8n-prechat-title">Welcome!</div>
                 <div class="n8n-prechat-subtitle">Please provide your email or phone number so we can reach you.</div>
                 <form id="n8n-prechat-form">
                     <div class="n8n-prechat-field">
@@ -505,12 +830,38 @@
                     <button type="submit" class="n8n-prechat-submit">Start Chat</button>
                 </form>
             </div>
-            <!-- Chat Area -->
-            <div id="n8n-chat-messages" class="n8n-chat-messages" style="${userInfo ? '' : 'display: none;'}"></div>
-            <form id="n8n-chat-form" class="n8n-chat-input-area" style="${userInfo ? '' : 'display: none;'}">
-                <input type="text" id="n8n-chat-input" class="n8n-chat-input" placeholder="Type your message..." autocomplete="off">
-                <button type="submit" class="n8n-chat-send" id="n8n-chat-send">Send</button>
-            </form>
+
+            <!-- TAB PANEL: Chat -->
+            <div class="n8n-tab-panel active" id="n8n-panel-chat" style="${userInfo ? '' : 'display: none;'}">
+                <div class="n8n-chat-action-bar" id="n8n-chat-action-bar">
+                    <span class="n8n-active-session-label" id="n8n-active-session-title"></span>
+                    <button class="n8n-new-chat-btn" id="n8n-new-chat-btn-chat">+ New Chat</button>
+                </div>
+                <div id="n8n-chat-messages" class="n8n-chat-messages"></div>
+                <div id="n8n-suggestions" class="n8n-suggestions hidden"></div>
+                <form id="n8n-chat-form" class="n8n-chat-input-area">
+                    <input type="file" id="n8n-file-input" accept="image/*,.pdf,.doc,.docx,.txt,.xls,.xlsx" style="display:none">
+                    <div id="n8n-paste-preview" style="display:none" class="n8n-paste-preview">
+                        <img id="n8n-paste-thumb" src="" alt="">
+                        <span class="n8n-paste-preview-name" id="n8n-paste-name"></span>
+                        <button type="button" class="n8n-paste-cancel" id="n8n-paste-cancel" title="Remove">×</button>
+                    </div>
+                    <div class="n8n-input-row">
+                        <button type="button" id="n8n-attach-btn" class="n8n-attach-btn" title="Attach file"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+                        <input type="text" id="n8n-chat-input" class="n8n-chat-input" placeholder="Type a message or paste image..." autocomplete="off">
+                        <button type="submit" class="n8n-chat-send" id="n8n-chat-send" title="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- TAB PANEL: History -->
+            <div class="n8n-tab-panel" id="n8n-panel-history" style="${userInfo ? '' : 'display: none;'}">
+                <div class="n8n-history-header">
+                    <span class="n8n-history-title">Your Conversations</span>
+                    <button class="n8n-new-chat-btn" id="n8n-new-chat-btn">+ New Chat</button>
+                </div>
+                <div class="n8n-session-list" id="n8n-session-list"></div>
+            </div>
         </div>
         <button id="n8n-chat-button">
             <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
@@ -535,6 +886,22 @@
     const prechatContainer = document.getElementById('n8n-prechat-container');
     const prechatForm = document.getElementById('n8n-prechat-form');
     const prechatContact = document.getElementById('n8n-prechat-contact');
+
+    // Tab bar elements
+    const tabBar = document.getElementById('n8n-tab-bar');
+    const tabChat = document.getElementById('n8n-tab-chat');
+    const tabHistory = document.getElementById('n8n-tab-history');
+    const panelChat = document.getElementById('n8n-panel-chat');
+    const panelHistory = document.getElementById('n8n-panel-history');
+
+    // Session/history panel elements
+    const sessionList = document.getElementById('n8n-session-list');
+    const newChatBtn = document.getElementById('n8n-new-chat-btn');
+
+    // File upload elements
+    const fileInput = document.getElementById('n8n-file-input');
+    const attachBtn = document.getElementById('n8n-attach-btn');
+    if (attachBtn) attachBtn.addEventListener('click', () => fileInput && fileInput.click());
 
     // ============================================
     // HELPER FUNCTIONS
@@ -571,19 +938,66 @@
         }
     }
 
+    // Switch between tabs
+    function switchTab(tab) {
+        if (tab === 'chat') {
+            tabChat.classList.add('active');
+            tabHistory.classList.remove('active');
+            panelChat.style.display = 'flex';
+            panelHistory.style.display = 'none';
+            setTimeout(() => scrollToBottom(), 50);
+        } else {
+            tabHistory.classList.add('active');
+            tabChat.classList.remove('active');
+            panelHistory.style.display = 'flex';
+            panelChat.style.display = 'none';
+            // Refresh history list when switching to history tab
+            if (userInfo?.contact) refreshHistoryList();
+        }
+    }
+
+    tabChat.addEventListener('click', () => switchTab('chat'));
+    tabHistory.addEventListener('click', () => switchTab('history'));
+
+    // Populate + refresh the History tab session list
+    async function refreshHistoryList() {
+        sessionList.innerHTML = '<div class="n8n-session-empty">Loading...</div>';
+        try {
+            const res = await fetch(`${CONFIG.API_URL}/api/sessions/by-contact/${encodeURIComponent(userInfo.contact)}`);
+            const data = await res.json();
+            renderSessionList(data.sessions || []);
+        } catch (e) {
+            sessionList.innerHTML = '<div class="n8n-session-empty">Failed to load history.</div>';
+        }
+    }
+
     // Show chat interface after successful pre-chat form submission
     function showChatInterface() {
         prechatContainer.style.display = 'none';
-        chatMessages.style.display = 'flex';
-        chatForm.style.display = 'flex';
-        // Scroll to bottom after a short delay to ensure rendering is complete
-        setTimeout(() => scrollToBottom(), 100);
+        // Show tab bar and activate chat panel
+        tabBar.classList.add('visible');
+        panelChat.style.display = 'flex';
+        panelHistory.style.display = 'none';
+        tabChat.classList.add('active');
+        tabHistory.classList.remove('active');
+        setTimeout(() => { scrollToBottom(); showInitialSuggestions(); }, 100);
+    }
+
+    // Show session picker (multiple sessions found) — opens History tab pre-populated
+    function showSessionPicker(sessions) {
+        prechatContainer.style.display = 'none';
+        tabBar.classList.add('visible');
+        // Render sessions into the list first
+        renderSessionList(sessions);
+        // Then switch to History tab
+        tabHistory.classList.add('active');
+        tabChat.classList.remove('active');
+        panelHistory.style.display = 'flex';
+        panelChat.style.display = 'none';
     }
 
     // Switch to a different session (for returning users)
     async function switchToSession(newSessionId, status = 'ai') {
-        console.log(`🔄 Switching from session ${sessionId} to ${newSessionId}`);
-
         // Leave old socket room if connected
         if (socket) {
             socket.emit('leave_session', sessionId);
@@ -612,16 +1026,20 @@
             const msgs = await response.json();
             msgs.forEach(m => {
                 if (m.sender === 'user') {
-                    addMessage('user', m.content);
+                    addMessage('user', m.content, m.created_at);
                 } else if (m.sender === 'admin') {
-                    addMessage('admin', m.content);
+                    addMessage('admin', m.content, m.created_at);
                 } else if (m.sender === 'ai') {
-                    addMessage('ai', m.content);
+                    addMessage('ai', m.content, m.created_at);
                 }
             });
-            console.log(`✅ Loaded ${msgs.length} messages for session ${sessionId}`);
             // Scroll to bottom after loading all messages
             setTimeout(() => scrollToBottom(), 100);
+            if (msgs.length === 0) {
+                setTimeout(() => showInitialSuggestions(), 120);
+            } else {
+                showHumanSuggestionOnly();
+            }
         } catch (err) {
             console.error('Failed to load session history:', err);
         }
@@ -638,6 +1056,207 @@
         const digits = phone.replace(/\D/g, '');
         return digits.length >= 7;
     }
+
+    // ============================================
+    // SESSION PICKER HELPERS
+    // ============================================
+
+    function formatRelativeDate(dateStr) {
+        if (!dateStr) return '';
+        const d = new Date(dateStr);
+        const now = new Date();
+        const diff = (now - d) / 1000;
+        if (diff < 60) return 'just now';
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+        if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
+        return d.toLocaleDateString();
+    }
+
+    // Render sessions into the History tab list
+    function renderSessionList(sessions) {
+        sessionList.innerHTML = '';
+        if (sessions.length === 0) {
+            sessionList.innerHTML = '<div class="n8n-session-empty">No conversations yet. Start a new chat!</div>';
+            return;
+        }
+        sessions.forEach(s => {
+            const title = s.title || s.first_message?.slice(0, 55) || 'Untitled Chat';
+            const date = formatRelativeDate(s.last_message_at || s.updated_at);
+            const badgeClass = s.status === 'human' ? 'n8n-badge-human' : 'n8n-badge-ai';
+            const badgeLabel = s.status === 'human' ? 'Human' : 'AI';
+            const isActive = s.session_id === sessionId;
+
+            const item = document.createElement('div');
+            item.className = 'n8n-session-item' + (isActive ? ' active-session' : '');
+            item.innerHTML = `
+                <div class="n8n-session-item-title">${isActive ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" style="display:inline;vertical-align:-1px;margin-right:4px;color:#0f67b2"><polygon points="5 3 19 12 5 21 5 3"/></svg>' : ''}${title}</div>
+                <div class="n8n-session-item-meta">
+                    <span>${date}</span>
+                    <span class="n8n-session-item-badge ${badgeClass}">${badgeLabel}</span>
+                </div>
+            `;
+            item.addEventListener('click', () => openSession(s));
+            sessionList.appendChild(item);
+        });
+    }
+
+    async function openSession(s) {
+        await switchToSession(s.session_id, s.status || 'ai');
+        switchTab('chat');
+    }
+
+    async function startNewChat() {
+        try {
+            newChatBtn.disabled = true;
+            newChatBtn.textContent = 'Creating...';
+            const resp = await fetch(`${CONFIG.API_URL}/api/sessions/new`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contact: userInfo.contact, customerName: userInfo.contact })
+            });
+            const data = await resp.json();
+            if (!data.session_id) throw new Error('No session_id returned');
+
+            // Switch to new session
+            sessionId = data.session_id;
+            localStorage.setItem('n8n_chat_session_id', sessionId);
+            sessionMode = 'ai';
+            localStorage.setItem('n8n_chat_mode', 'ai');
+            if (socket) socket.emit('join_session', sessionId);
+
+            chatMessages.innerHTML = '';
+            setMode('ai');
+            switchTab('chat');
+            addSystemMessage('New conversation started. How can we help you?');
+            showInitialSuggestions();
+        } catch (err) {
+            console.error('Failed to create new session:', err);
+            newChatBtn.textContent = '+ New Chat';
+        } finally {
+            newChatBtn.disabled = false;
+            newChatBtn.textContent = '+ New Chat';
+        }
+    }
+
+    if (newChatBtn) newChatBtn.addEventListener('click', startNewChat);
+
+    // ============================================
+    // FILE UPLOAD HANDLER (shared)
+    // ============================================
+    async function uploadFile(file) {
+        // Show progress placeholder
+        const progressWrapper = document.createElement('div');
+        progressWrapper.className = 'n8n-msg-wrapper n8n-msg-wrapper-user';
+        const progressLabel = document.createElement('div');
+        progressLabel.className = 'n8n-msg-label n8n-msg-label-user';
+        progressLabel.innerText = 'You';
+        const progressBubble = document.createElement('div');
+        progressBubble.className = 'n8n-msg n8n-msg-user';
+        progressBubble.innerHTML = `<span class="n8n-upload-progress">📎 Uploading ${file.name}...</span>`;
+        progressWrapper.appendChild(progressLabel);
+        progressWrapper.appendChild(progressBubble);
+        chatMessages.appendChild(progressWrapper);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        if (attachBtn) attachBtn.disabled = true;
+
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('sessionId', sessionId);
+
+            const resp = await fetch(`${CONFIG.API_URL}/api/upload`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ error: 'Upload failed' }));
+                throw new Error(err.error || `Upload failed: ${resp.status}`);
+            }
+
+            const result = await resp.json();
+            progressWrapper.remove();
+
+            const payload = JSON.stringify({
+                fileUrl: result.fileUrl,
+                fileName: result.fileName,
+                fileType: result.fileType,
+                fileSize: result.fileSize
+            });
+            addMessage('user', payload);
+
+        } catch (err) {
+            progressBubble.innerHTML = `<span style="color:#fca5a5"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-2px;margin-right:4px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>Upload failed: ${err.message}</span>`;
+            console.error('File upload error:', err);
+        } finally {
+            if (attachBtn) attachBtn.disabled = false;
+        }
+    }
+
+    // File input change (📎 button)
+    if (fileInput) {
+        fileInput.addEventListener('change', async () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+            fileInput.value = '';
+            await uploadFile(file);
+        });
+    }
+
+    // ============================================
+    // PASTE PREVIEW (clipboard images)
+    // ============================================
+    let pendingPasteFile = null;
+    const pastePreviewEl = document.getElementById('n8n-paste-preview');
+    const pasteThumbEl   = document.getElementById('n8n-paste-thumb');
+    const pasteNameEl    = document.getElementById('n8n-paste-name');
+    const pasteCancelBtn = document.getElementById('n8n-paste-cancel');
+
+    function showPastePreview(file) {
+        pendingPasteFile = file;
+        pasteNameEl.textContent = file.name;
+        const reader = new FileReader();
+        reader.onload = (ev) => { pasteThumbEl.src = ev.target.result; };
+        reader.readAsDataURL(file);
+        pastePreviewEl.style.display = 'flex';
+        chatInput.placeholder = 'Add a caption (optional)...';
+        chatInput.focus();
+    }
+
+    function clearPastePreview() {
+        pendingPasteFile = null;
+        pastePreviewEl.style.display = 'none';
+        pasteThumbEl.src = '';
+        pasteNameEl.textContent = '';
+        chatInput.placeholder = 'Type a message or paste image...';
+    }
+
+    if (pasteCancelBtn) pasteCancelBtn.addEventListener('click', clearPastePreview);
+
+    // Listen for paste on the input and message area
+    chatMessages.addEventListener('paste', handlePaste);
+    chatInput.addEventListener('paste', handlePaste);
+
+    function handlePaste(e) {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        for (const item of items) {
+            if (item.kind === 'file' && item.type.startsWith('image/')) {
+                e.preventDefault();
+                const ext = item.type === 'image/png' ? '.png' : item.type === 'image/gif' ? '.gif' : item.type === 'image/webp' ? '.webp' : '.jpg';
+                const blob = item.getAsFile();
+                const file = new File([blob], `screenshot${ext}`, { type: item.type });
+                showPastePreview(file);
+                return;
+            }
+        }
+    }
+
+    // New Chat button inside the Chat panel
+    const newChatBtnChat = document.getElementById('n8n-new-chat-btn-chat');
+    if (newChatBtnChat) newChatBtnChat.addEventListener('click', startNewChat);
 
     // Pre-chat form submission handler
     prechatForm.onsubmit = async (e) => {
@@ -659,7 +1278,7 @@
             return;
         }
 
-        // Save user info - determine if email or phone
+        // Save user info
         userInfo = {
             contact: contact,
             email: isEmail ? contact : null,
@@ -667,35 +1286,38 @@
         };
         localStorage.setItem('n8n_chat_user_info', JSON.stringify(userInfo));
 
-        // Check for existing session by contact (session continuity)
+        const submitBtn = prechatForm.querySelector('.n8n-prechat-submit');
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Loading...';
+
+        // Fetch ALL sessions for this contact
         try {
-            console.log(`🔍 Checking for existing session with contact: ${contact}`);
             const response = await fetch(`${CONFIG.API_URL}/api/sessions/by-contact/${encodeURIComponent(contact)}`);
             const data = await response.json();
+            const sessions = data.sessions || [];
 
-            if (data.found && data.session) {
-                // Returning user - restore previous session
-                console.log(`✅ Found existing session: ${data.session.session_id}`);
-
-                // Switch to the existing session
-                await switchToSession(data.session.session_id, data.session.status || 'ai');
-
-                // Show chat interface
+            if (sessions.length === 1) {
+                // Exactly one session — restore it directly (no picker needed)
+                await switchToSession(sessions[0].session_id, sessions[0].status || 'ai');
                 showChatInterface();
-
-                // Show welcome back message
-                addSystemMessage(`Welcome back! Your previous conversation has been restored.`);
-
                 return;
-            } else {
-                console.log('📝 No existing session found, creating new session');
             }
+
+            if (sessions.length > 1) {
+                // Multiple sessions — show picker
+                showSessionPicker(sessions);
+                return;
+            }
+
+            // No existing sessions — new user flow
         } catch (err) {
-            console.error('Failed to check for existing session:', err);
-            // Continue with new session flow on error
+            console.error('Failed to fetch sessions:', err);
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Start Chat';
         }
 
-        // New user flow - save user info to server
+        // New user: save user info then start chat
         try {
             await fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}/user-info`, {
                 method: 'PUT',
@@ -703,17 +1325,68 @@
                 body: JSON.stringify(userInfo)
             });
         } catch (err) {
-            console.error('Failed to save user info to server:', err);
+            console.error('Failed to save user info:', err);
         }
 
-        // Show chat interface
         showChatInterface();
-
-        // Add welcome message
-        addSystemMessage(`Welcome! How can we help you today?`);
+        addSystemMessage('Welcome! How can we help you today?');
     };
 
-    function addMessage(sender, content) {
+    // Try to parse a file-message payload from a content string
+    function parseFileMsg(content) {
+        try {
+            const p = JSON.parse(content);
+            return (p && typeof p.fileUrl === 'string') ? p : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function renderFileMsgContent(fileData, sender) {
+        const container = document.createElement('div');
+        container.className = 'n8n-file-msg';
+        const isImage = fileData.fileType && fileData.fileType.startsWith('image/');
+        if (isImage) {
+            const img = document.createElement('img');
+            img.className = 'n8n-file-img';
+            img.src = fileData.fileUrl;
+            img.alt = fileData.fileName || 'image';
+            img.title = fileData.fileName || 'image';
+            img.addEventListener('click', () => window.open(fileData.fileUrl, '_blank'));
+            container.appendChild(img);
+        } else {
+            const link = document.createElement('a');
+            link.className = 'n8n-file-doc';
+            link.href = fileData.fileUrl;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            const sizeKB = fileData.fileSize ? Math.round(fileData.fileSize / 1024) : null;
+            link.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="n8n-file-name">${fileData.fileName || 'File'}</span>${sizeKB ? `<span style="opacity:0.7;font-size:11px">${sizeKB}KB</span>` : ''}`;
+            container.appendChild(link);
+        }
+        return container;
+    }
+
+    function formatMsgTime(ts) {
+        const d = ts ? new Date(ts) : new Date();
+        const now = new Date();
+        const diffSec = Math.floor((now - d) / 1000);
+        if (diffSec < 60) return 'Just now';
+        if (diffSec < 3600) return `${Math.floor(diffSec / 60)} min ago`;
+        const h = d.getHours();
+        const m = String(d.getMinutes()).padStart(2, '0');
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const hour12 = h % 12 || 12;
+        const timeStr = `${hour12}:${m} ${ampm}`;
+        const isToday = d.toDateString() === now.toDateString();
+        if (isToday) return `Today ${timeStr}`;
+        const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+        if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${timeStr}`;
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return `${months[d.getMonth()]} ${d.getDate()}, ${timeStr}`;
+    }
+
+    function addMessage(sender, content, timestamp = null) {
         removeTypingIndicator();
 
         // Create wrapper div for label + message
@@ -723,12 +1396,13 @@
         // Add label
         const labelDiv = document.createElement('div');
         labelDiv.className = `n8n-msg-label n8n-msg-label-${sender}`;
+        const timeSpan = `<span class="n8n-msg-time">${formatMsgTime(timestamp)}</span>`;
         if (sender === 'user') {
-            labelDiv.innerText = 'You';
+            labelDiv.innerHTML = `You${timeSpan}`;
         } else if (sender === 'ai') {
-            labelDiv.innerText = '🤖 AI Bot';
+            labelDiv.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-1px;margin-right:4px"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>AI Bot' + timeSpan;
         } else if (sender === 'admin') {
-            labelDiv.innerText = '👤 Support Agent';
+            labelDiv.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-1px;margin-right:4px"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Support Agent' + timeSpan;
         }
         wrapperDiv.appendChild(labelDiv);
 
@@ -736,7 +1410,11 @@
         const msgDiv = document.createElement('div');
         msgDiv.className = `n8n-msg n8n-msg-${sender}`;
 
-        if (typeof marked !== 'undefined' && sender !== 'user') {
+        // Detect file message
+        const fileData = parseFileMsg(content);
+        if (fileData) {
+            msgDiv.appendChild(renderFileMsgContent(fileData, sender));
+        } else if (typeof marked !== 'undefined' && sender !== 'user') {
             msgDiv.innerHTML = marked.parse(content);
         } else {
             msgDiv.innerText = content;
@@ -753,6 +1431,88 @@
         msgDiv.innerText = content;
         chatMessages.appendChild(msgDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    // ============================================
+    // SUGGESTION CHIPS
+    // ============================================
+    const suggestionsEl = document.getElementById('n8n-suggestions');
+
+    // Static greeting chips shown before any conversation starts
+    const GREETING_CHIPS = [
+        { label: '📱 Best mobiles', msg: 'Show me the best mobile phones' },
+        { label: '💻 Best laptops', msg: 'Show me the best laptops' },
+        // { label: '📺 Best TVs', msg: 'Show me the best TVs' },
+        { label: '🔋 Best earbuds', msg: 'Show me the best earbuds' },
+        { label: '🛒 New arrivals', msg: 'What are the new arrivals?' },
+        { label: '🏷️ Today\'s deals', msg: 'What are today\'s best deals?' },
+    ];
+
+    function showInitialSuggestions() {
+        if (!suggestionsEl) return;
+        suggestionsEl.innerHTML = '';
+        GREETING_CHIPS.forEach(({ label, msg }) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'n8n-suggestion-chip';
+            chip.textContent = label;
+            chip.addEventListener('click', () => {
+                clearSuggestions();
+                chatInput.value = msg;
+                chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+            });
+            suggestionsEl.appendChild(chip);
+        });
+        // Add Chat with Human chip
+        const humanChip = document.createElement('button');
+        humanChip.type = 'button';
+        humanChip.className = 'n8n-suggestion-chip human';
+        humanChip.textContent = '👤 Chat with Human';
+        humanChip.addEventListener('click', () => {
+            clearSuggestions();
+            chatInput.value = 'Chat with human';
+            chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+        });
+        suggestionsEl.appendChild(humanChip);
+        suggestionsEl.classList.remove('hidden');
+    }
+
+    function showSuggestions(suggestions) {
+        if (!suggestionsEl) return;
+        if (sessionMode !== 'ai') {
+            clearSuggestions();
+            return;
+        }
+        suggestionsEl.innerHTML = '';
+        suggestions.forEach(text => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            const isHuman = text === '__HUMAN__';
+            chip.className = 'n8n-suggestion-chip' + (isHuman ? ' human' : '');
+            chip.textContent = isHuman ? '👤 Chat with Human' : text;
+            chip.addEventListener('click', () => {
+                clearSuggestions();
+                const msg = isHuman ? 'Chat with human' : text;
+                chatInput.value = msg;
+                chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+            });
+            suggestionsEl.appendChild(chip);
+        });
+        suggestionsEl.classList.remove('hidden');
+    }
+
+    function clearSuggestions() {
+        if (!suggestionsEl) return;
+        suggestionsEl.classList.add('hidden');
+        suggestionsEl.innerHTML = '';
+    }
+
+    function showHumanSuggestionOnly() {
+        if (sessionMode === 'ai') {
+            showSuggestions(['__HUMAN__']);
+        } else {
+            clearSuggestions();
+        }
     }
 
     function showTypingIndicator() {
@@ -779,6 +1539,7 @@
         localStorage.setItem('n8n_chat_mode', mode);
 
         if (mode === 'human') {
+            clearSuggestions();
             modeBadge.textContent = 'HUMAN';
             modeBadge.className = 'n8n-mode-badge n8n-mode-human';
             statusText.textContent = 'Connected to human support';
@@ -832,8 +1593,6 @@
     // ============================================
     async function sendToN8nAI(message) {
         try {
-            console.log('📤 Sending to n8n via proxy:', { message });
-
             // Use local proxy to avoid CORS issues
             const response = await fetch(`${CONFIG.API_URL}/api/chat`, {
                 method: 'POST',
@@ -856,7 +1615,6 @@
             }
 
             const data = await response.json();
-            console.log('🤖 AI Response:', data);
 
             // Handle response format - could be {output: "..."} or [{output: "..."}] or {text: "..."} or {result: "..."}
             let output = '';
@@ -869,7 +1627,9 @@
             }
 
             if (output) {
-                return { output: output };
+                // Pass through suggestions from n8n if present
+                const suggestions = Array.isArray(data.suggestions) ? data.suggestions : null;
+                return { output, ...(suggestions ? { suggestions } : {}) };
             } else {
                 console.warn('⚠️ Unexpected response format:', data);
                 // Try to stringify if it's not empty
@@ -889,7 +1649,49 @@
     // ============================================
     chatForm.onsubmit = async (e) => {
         e.preventDefault();
+        clearSuggestions();
         const content = chatInput.value.trim();
+
+        // If there's a pending pasted image, upload it (with optional caption)
+        if (pendingPasteFile) {
+            const fileToUpload = pendingPasteFile;
+            clearPastePreview();
+            chatInput.value = '';
+            await uploadFile(fileToUpload);
+            // If there was also a caption, send it as a separate text message
+            if (content) {
+                addMessage('user', content);
+                setLoading(true);
+                await saveMessageToDB('user', content);
+                if (sessionMode === 'ai') {
+                    showTypingIndicator();
+                    try {
+                        const aiResponse = await sendToN8nAI(content);
+                        removeTypingIndicator();
+                        if (aiResponse && aiResponse.output) {
+                            addMessage('ai', aiResponse.output);
+                                if (!aiResponse.handoff) {
+                                    if (Array.isArray(aiResponse.suggestions) && aiResponse.suggestions.length > 0) {
+                                        showSuggestions([...aiResponse.suggestions.slice(0, 2), '__HUMAN__']);
+                                    } else {
+                                        showHumanSuggestionOnly();
+                                    }
+                                }
+                            if (!aiResponse.saved) await saveMessageToDB('ai', aiResponse.output);
+                        }
+                    } catch (err) {
+                        removeTypingIndicator();
+                        addSystemMessage('⚠️ AI unavailable. Connecting to human support...');
+                        setMode('human');
+                    }
+                } else {
+                    statusText.textContent = 'Message sent • Waiting for response...';
+                }
+                setLoading(false);
+            }
+            return;
+        }
+
         if (!content) return;
 
         // Show user message immediately
@@ -914,6 +1716,14 @@
                 if (aiResponse && aiResponse.output) {
                     // Display AI response
                     addMessage('ai', aiResponse.output);
+                    // Suggestions always come from the API (generated server-side from products DB)
+                    if (!(aiResponse.handoff || wantsHuman)) {
+                        if (Array.isArray(aiResponse.suggestions) && aiResponse.suggestions.length > 0) {
+                            showSuggestions([...aiResponse.suggestions.slice(0, 2), '__HUMAN__']);
+                        } else {
+                            showHumanSuggestionOnly();
+                        }
+                    }
 
                     // Save AI response to database only if not already saved by API
                     if (!aiResponse.saved) {
@@ -965,7 +1775,9 @@
                     statusText.textContent = session.status === 'human'
                         ? 'Connected to human support'
                         : 'Online • Ready to help';
-                    console.log(`📋 Session mode from server: ${session.status}`);
+                    if (session.status === 'human') {
+                        clearSuggestions();
+                    }
                 }
             })
             .catch(err => {
@@ -978,15 +1790,20 @@
             .then(msgs => {
                 msgs.forEach(m => {
                     if (m.sender === 'user') {
-                        addMessage('user', m.content);
+                        addMessage('user', m.content, m.created_at);
                     } else if (m.sender === 'admin') {
-                        addMessage('admin', m.content);
+                        addMessage('admin', m.content, m.created_at);
                     } else if (m.sender === 'ai') {
-                        addMessage('ai', m.content);
+                        addMessage('ai', m.content, m.created_at);
                     }
                 });
                 // Scroll to bottom after loading all messages
                 setTimeout(() => scrollToBottom(), 100);
+                if (msgs.length === 0) {
+                    setTimeout(() => showInitialSuggestions(), 120);
+                } else {
+                    showHumanSuggestionOnly();
+                }
             })
             .catch(err => console.error('Failed to load history:', err));
 
@@ -1001,6 +1818,7 @@
         socket.on('new_message', (msg) => {
             if (msg.sessionId === sessionId && msg.sender === 'admin') {
                 addMessage('admin', msg.content);
+                clearSuggestions(); // No AI chips in human mode
                 statusText.textContent = 'Agent replied • Connected';
                 setMode('human'); // Automatically switch to human mode if admin replies
             }
@@ -1010,14 +1828,16 @@
     // ============================================
     // TOGGLE HANDLERS
     // ============================================
-    chatButton.onclick = () => {
-        chatWindow.classList.toggle('open');
-        // Scroll to bottom when opening the chat
-        if (chatWindow.classList.contains('open')) {
+    function setChatOpen(isOpen) {
+        chatWindow.classList.toggle('open', isOpen);
+        chatButton.classList.toggle('hidden', isOpen);
+        if (isOpen) {
             setTimeout(() => scrollToBottom(), 100);
         }
-    };
-    chatClose.onclick = () => chatWindow.classList.remove('open');
+    }
+
+    chatButton.onclick = () => setChatOpen(true);
+    chatClose.onclick = () => setChatOpen(false);
 
     // ============================================
     // LOAD DEPENDENCIES AND INITIALIZE
@@ -1044,6 +1864,11 @@
                 breaks: true,
                 gfm: true
             });
+        }
+
+        // If this is a returning user (already logged in), show the tabs immediately
+        if (userInfo) {
+            showChatInterface(); // makes tab bar visible, shows chat panel
         }
     });
 
