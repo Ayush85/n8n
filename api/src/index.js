@@ -282,20 +282,30 @@ app.post('/api/upload', upload.single('file'), async (req, res, next) => {
         });
         io.emit('session_update', { sessionId, lastMessage: `📎 ${req.file.originalname}` });
 
-        // Broadcast admin_alert to ALL connected sockets (dashboard notification)
+        const fileSessionResult = await pool.query(
+            'SELECT status, customer_name, user_contact FROM sessions WHERE session_id = $1 LIMIT 1',
+            [sessionId]
+        );
+        const fileSessionRow = fileSessionResult.rows[0];
+        const fileIsHumanSession = fileSessionRow?.status === 'human';
+
+        // Broadcast admin_alert — only relevant for human sessions
         io.emit('admin_alert', {
             sessionId,
             sender: 'user',
             content: `📎 ${req.file.originalname}`,
-            isHumanSession: false,
+            userName: fileSessionRow?.customer_name || fileSessionRow?.user_contact || 'Customer',
+            isHumanSession: fileIsHumanSession,
             timestamp: new Date()
         });
 
-        await sendAdminPushNotification({
-            heading: 'New customer document',
-            content: `File received: ${req.file.originalname}`,
-            url: getPublicAppUrl(),
-        });
+        if (fileIsHumanSession) {
+            await sendAdminPushNotification({
+                heading: `New file from ${fileSessionRow?.customer_name || fileSessionRow?.user_contact || 'Customer'}`,
+                content: `File received: ${req.file.originalname}`,
+                url: getPublicAppUrl(),
+            });
+        }
 
         res.json({ success: true, fileUrl, fileName: req.file.originalname, fileType: req.file.mimetype, fileSize: req.file.size });
     } catch (error) {
@@ -829,11 +839,13 @@ app.post('/api/messages', async (req, res, next) => {
                 timestamp: new Date()
             });
 
-            await sendAdminPushNotification({
-                heading: 'New customer message',
-                content: String(content || '').slice(0, 140) || 'You have a new message',
-                url: getPublicAppUrl(),
-            });
+            if (sessionRow?.status === 'human') {
+                await sendAdminPushNotification({
+                    heading: `Message from ${sessionRow?.customer_name || sessionRow?.user_contact || 'Customer'}`,
+                    content: String(content || '').slice(0, 140) || 'You have a new message',
+                    url: getPublicAppUrl(),
+                });
+            }
         }
 
         logger.info(`Message received for session ${sessionId} from ${sender} | IP: ${clientIp}`);

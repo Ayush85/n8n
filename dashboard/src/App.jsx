@@ -275,13 +275,12 @@ function App() {
         }
     };
 
-    const maybeShowBrowserNotification = (msg, isHumanSession, isActiveSession) => {
+    const maybeShowBrowserNotification = (msg, userName, isActiveSession) => {
         if (!('Notification' in window)) return;
         if (Notification.permission !== 'granted') return;
-        // Show notification if tab is hidden OR if the message is from a non-active session
-        if (document.visibilityState === 'visible' && isActiveSession) return;
+        if (isActiveSession) return;
 
-        const title = isHumanSession ? '🔴 Human Support Message' : 'New Customer Message';
+        const title = `Message from ${userName || 'Customer'}`;
         const body = String(msg.content || '').slice(0, 140) || 'You have a new message';
         try {
             const n = new Notification(title, {
@@ -293,7 +292,7 @@ function App() {
                 window.focus();
                 n.close();
             };
-            setTimeout(() => n.close(), 10000);
+            setTimeout(() => n.close(), 8000);
         } catch (err) {
             console.warn('Browser notification failed:', err);
         }
@@ -414,7 +413,13 @@ function App() {
             const isHumanSession = !!alert.isHumanSession;
             const userName = alert.userName || 'Customer';
 
-            // Always add to notification panel
+            // Only notify for human-agent sessions — ignore AI/bot messages
+            if (!isHumanSession) {
+                fetchSessions();
+                return;
+            }
+
+            // Add to notification panel
             setNotificationItems(prev => ([{
                 id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 sessionId,
@@ -426,18 +431,16 @@ function App() {
                 isHumanSession,
             }, ...prev]).slice(0, 40));
 
-            // Always play sound for every incoming customer message
-            playAlertTone(
-                isHumanSession ? 1040 : 920,
-                isHumanSession ? 0.36 : 0.30,
-                isHumanSession // repeat for human sessions
-            );
+            // Play sound only when the chat is not currently open
+            if (!isActiveSession) {
+                playAlertTone(1040, 0.36, true);
+            }
 
-            // Always show browser notification
-            maybeShowBrowserNotification(alert, isHumanSession, isActiveSession && document.hasFocus());
+            // Show browser notification only when the chat is not currently open
+            maybeShowBrowserNotification(alert, userName, isActiveSession);
 
-            // Flash title for human sessions when not actively viewing that session
-            if (isHumanSession && !isActiveSession) {
+            // Flash title when not actively viewing that session
+            if (!isActiveSession) {
                 startTitleFlash();
             }
 
