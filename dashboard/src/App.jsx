@@ -2,6 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import {
     MessageSquare,
+    Bell,
+    BellRing,
+    Volume2,
+    VolumeX,
     Send,
     User,
     ShieldCheck,
@@ -47,6 +51,7 @@ import { format } from 'date-fns';
 
 const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 const ADMIN_SECRET = import.meta.env.VITE_ADMIN_SECRET || '';
+const WEB_PUSH_PUBLIC_KEY = import.meta.env.VITE_WEB_PUSH_PUBLIC_KEY || '';
 
 // Helper: fetch with admin Authorization header pre-attached
 const adminFetch = (url, options = {}) => {
@@ -117,7 +122,262 @@ function App() {
     const [expandedUserRows, setExpandedUserRows] = useState(new Set());
     const [expandedQueryIdx, setExpandedQueryIdx] = useState(null);
     const [analyticsModal, setAnalyticsModal] = useState(null);
+    const [notificationItems, setNotificationItems] = useState([]);
+    const [showNotifications, setShowNotifications] = useState(false);
+    const [alertSoundEnabled, setAlertSoundEnabled] = useState(true);
+    const [notificationPermission, setNotificationPermission] = useState(
+        typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
+    );
     const messagesEndRef = useRef(null);
+    const notificationPanelRef = useRef(null);
+    const alertAudioCtxRef = useRef(null);
+    const pushRegistrationRef = useRef(null);
+    const titleFlashRef = useRef(null);
+    const unreadNotificationCount = notificationItems.filter(n => !n.read).length;
+
+    const refreshNotificationPermission = () => {
+        if (typeof Notification === 'undefined') {
+            setNotificationPermission('unsupported');
+            return;
+        }
+        setNotificationPermission(Notification.permission);
+    };
+
+    const urlBase64ToUint8Array = (base64String) => {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; i += 1) {
+            outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+    };
+
+    const ensurePushServiceWorker = async () => {
+        if (!('serviceWorker' in navigator)) return null;
+        if (pushRegistrationRef.current) return pushRegistrationRef.current;
+        try {
+            const registration = await navigator.serviceWorker.register('/push-sw.js', { scope: '/' });
+            pushRegistrationRef.current = registration;
+            return registration;
+        } catch (err) {
+            console.warn('Push service worker registration failed:', err);
+            return null;
+        }
+    };
+
+    const syncAdminPushSubscription = async (forceRefresh = false) => {
+        if (!WEB_PUSH_PUBLIC_KEY) return false;
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+
+        const registration = await ensurePushServiceWorker();
+        if (!registration || !registration.pushManager) return false;
+
+        try {
+            let subscription = await registration.pushManager.getSubscription();
+            if (subscription && forceRefresh) {
+                try {
+                    await adminFetch(`${SOCKET_URL}/api/push/unsubscribe`, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            role: 'admin',
+                            endpoint: subscription.endpoint,
+                        }),
+                    });
+                } catch (err) {
+                    console.warn('Failed to remove previous push subscription from API:', err);
+                }
+
+                try {
+                    await subscription.unsubscribe();
+                } catch (err) {
+                    console.warn('Failed to unsubscribe previous browser push subscription:', err);
+                }
+                subscription = null;
+            }
+
+            if (!subscription) {
+                subscription = await registration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(WEB_PUSH_PUBLIC_KEY),
+                });
+            }
+
+            await adminFetch(`${SOCKET_URL}/api/push/subscribe`, {
+                method: 'POST',
+                body: JSON.stringify({
+                    role: 'admin',
+                    externalId: 'admin_console',
+                    subscription: subscription.toJSON(),
+                }),
+            });
+
+            return true;
+        } catch (err) {
+            console.warn('Failed to sync admin push subscription:', err);
+            return false;
+        }
+    };
+
+    const requestPushPermission = async () => {
+        await unlockAlertAudio();
+
+        if (!WEB_PUSH_PUBLIC_KEY) {
+            alert('Web push is not configured. Please set VITE_WEB_PUSH_PUBLIC_KEY in dashboard environment.');
+            return;
+        }
+
+        if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+            alert('Notifications are blocked for this site. Please open browser Site Settings and allow Notifications for this domain.');
+            refreshNotificationPermission();
+            return;
+        }
+
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+            try {
+                await Notification.requestPermission();
+            } catch (err) {
+                console.warn('Browser permission request failed:', err);
+            }
+        }
+
+        await syncAdminPushSubscription(true);
+        refreshNotificationPermission();
+    };
+
+    const getPushStatusLabel = () => {
+        if (!WEB_PUSH_PUBLIC_KEY) return 'Push: Config Missing';
+        if (notificationPermission === 'granted') return 'Push: On';
+        if (notificationPermission === 'denied') return 'Push: Blocked';
+        if (notificationPermission === 'unsupported') return 'Push: N/A';
+        return 'Push: Off';
+    };
+
+    const getAlertAudioCtx = () => {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        if (!alertAudioCtxRef.current || alertAudioCtxRef.current.state === 'closed') {
+            alertAudioCtxRef.current = new Ctx();
+        }
+        return alertAudioCtxRef.current;
+    };
+
+    const unlockAlertAudio = async () => {
+        const ctx = getAlertAudioCtx();
+        if (!ctx) return;
+        if (ctx.state === 'suspended') {
+            try {
+                await ctx.resume();
+            } catch (err) {
+                console.warn('Admin audio unlock failed:', err);
+            }
+        }
+    };
+
+    const maybeShowBrowserNotification = (msg, isHumanSession, isActiveSession) => {
+        if (!('Notification' in window)) return;
+        if (Notification.permission !== 'granted') return;
+        // Show notification if tab is hidden OR if the message is from a non-active session
+        if (document.visibilityState === 'visible' && isActiveSession) return;
+
+        const title = isHumanSession ? '🔴 Human Support Message' : 'New Customer Message';
+        const body = String(msg.content || '').slice(0, 140) || 'You have a new message';
+        try {
+            const n = new Notification(title, {
+                body,
+                tag: `admin-chat-${msg.sessionId || 'unknown'}`,
+                renotify: true
+            });
+            n.onclick = () => {
+                window.focus();
+                n.close();
+            };
+            setTimeout(() => n.close(), 10000);
+        } catch (err) {
+            console.warn('Browser notification failed:', err);
+        }
+    };
+
+    // Base64-encoded tiny notification chime WAV (fallback when AudioContext is suspended)
+    const FALLBACK_CHIME_URI = 'data:audio/wav;base64,UklGRl4FAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YToFAAAAAAEAAgADAAQABgAJAA0AEgAYACAAKQAzAD4ASgBXAGUAdACDAJMApAC1AMcA2QDrAP0AEAETABYAGQATAAYAEQAUAB8AKQA0AD8ASgBVAGEAbAB4AIQAkACbAKcAsgC9AMkA1ADfAOoA9QD/AAkBEwEdAScBMQE7AUUBIQEAAQIBBAEGAQ0BFAEWARMBEQE1AU0BcAF9AYwBmQGOAYkBnAGyAbkBuAG4AbgBugG8Ab0BvgG/AcABwQHCAcEBuQGkAZkBiQFnATQBLQEnASEBGwEVAQ8BCQEDAf0A9wDxAOsA5QDfANkA0wDNAMcAwQC7ALUArwCpAKMAnQCXAJEAiwCFAH8AeQBzAGsAZABcAFQATABDADoAMgAqACIAGgASAAoAAwD8//T/7f/l/9z/1P/N/8X/vf+2/67/p/+f/5j/kf+K/4P/fP91/27/aP9h/1r/VP9N/0f/Qf87/zX/L/8q/yT/H/8Z/xT/D/8K/wX/AP/7/vf+8v7u/un+5f7g/tz+2P7U/tD+zP7I/sT+wP68/rj+tP6w/q3+qf6l/qH+nv6a/pb+kv6P/ov+h/6E/oD+ff55/nb+cv5v/mv+aP5l/mH+Xv5b/lj+Vf5S/k/+TP5J/kb+RP5B/j7+PP45/jf+NP4y/i/+Lf4r/ij+Jv4k/iL+IP4e/hz+Gv4Y/hf+Ff4T/hL+EP4P/g3+DP4L/gn+CP4H/gb+Bf4E/gP+Av4B/gH+AP4A/gD+AP4A/gD+Af4B/gL+Av4D/gT+Bf4G/gf+CP4J/gr+DP4N/g/+EP4S/hP+Ff4X/hj+Gv4c/h7+IP4i/iT+Jv4o/iv+Lf4v/jL+NP43/jn+PP4+/kH+RP5G/kn+TP5P/lL+Vf5Y/lv+Xv5h/mX+aP5r/m/+cv52/nn+ff6A/oT+h/6L/o/+kv6W/pr+nv6h/qX+qf6t/rD+tP64/rz+wP7E/sj+zP7Q/tT+2P7c/uD+5f7p/u7+8v73/vv+AP8F/wr/D/8U/xn/H/8k/yr/L/81/zv/Qf9H/03/VP9a/2H/aP9u/3X/fP+D/4r/kf+Y/5//p/+u/7b/vf/F/83/1P/c/+X/7f/0//z/AwAKABIAGgAiACoAMgA6AEMATABUAFwAZABrAHMAeQB/AIUAiwCRAJcAnQCjAKkArwC1ALsAwQDHAM0A0wDZAN8A5QDrAPEA9wD9AAMBCQEPARUBGwEhAScBLQE0ATQBNAE0ATQBMQEvASwBKQEnASQBIQEeARsBGAEVARIBDgELAQgBBAEBAf4A+gD3APQA8ADtAOkA5gDiAN8A2wDYANQA0QDNAM0AzADLAMkAyADHAMUAxADDAMEAwAC/AL0AvAC7ALkAuAC3ALYAtACzALAAqACiAJkAkACIAH8AeABxAGsAZQBgAFwAWABVAFEATgBLAEgARQBDAEAAOwA0ACwAJAAcABIACQAAAA==';
+
+    const playAlertTone = (frequency = 880, duration = 0.32, repeat = false) => {
+        if (!alertSoundEnabled) return;
+
+        const playWithAudioContext = async () => {
+            try {
+                const ctx = getAlertAudioCtx();
+                if (!ctx) return false;
+                // Try to resume if suspended
+                if (ctx.state === 'suspended') {
+                    try { await ctx.resume(); } catch (e) { /* ignore */ }
+                }
+                if (ctx.state === 'suspended') return false; // still suspended — give up
+
+                // Professional 2-note chime — ascending perfect fifth
+                const notes = [frequency, frequency * 1.5];
+                const noteGap = 0.15;
+                const noteDur = 0.22;
+                notes.forEach((freq, i) => {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.value = freq;
+                    const start = ctx.currentTime + i * noteGap;
+                    gain.gain.setValueAtTime(0.0001, start);
+                    gain.gain.exponentialRampToValueAtTime(0.12, start + 0.015);
+                    gain.gain.setValueAtTime(0.12, start + noteDur - 0.06);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, start + noteDur);
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start(start);
+                    osc.stop(start + noteDur + 0.01);
+                });
+                return true;
+            } catch (err) {
+                console.warn('AudioContext alert failed:', err);
+                return false;
+            }
+        };
+
+        const playWithFallback = () => {
+            try {
+                const audio = new Audio(FALLBACK_CHIME_URI);
+                audio.volume = 0.5;
+                audio.play().catch(() => {});
+            } catch (e) {
+                console.warn('Fallback audio also failed:', e);
+            }
+        };
+
+        // Try AudioContext first, fallback to HTML5 Audio
+        playWithAudioContext().then(success => {
+            if (!success) playWithFallback();
+        });
+
+        // Repeat for urgent human-session messages
+        if (repeat) {
+            setTimeout(() => {
+                playWithAudioContext().then(success => {
+                    if (!success) playWithFallback();
+                });
+            }, 3000);
+        }
+    };
+
+    const markSessionNotificationsRead = (sessionId) => {
+        setNotificationItems(prev => prev.map(n => (
+            n.sessionId === sessionId ? { ...n, read: true } : n
+        )));
+    };
+
+    const openSession = (session, { closeSidebarOnMobile = false, switchToChats = false } = {}) => {
+        setActiveSession(session);
+        markSessionNotificationsRead(session.session_id);
+        if (switchToChats) setCurrentView('chats');
+        if (closeSidebarOnMobile && window.innerWidth < 768) setIsSidebarOpen(false);
+    };
 
     // Initialize Socket (only once on mount)
     useEffect(() => {
@@ -132,10 +392,13 @@ function App() {
         if (!socket) return;
 
         const handleNewMessage = (msg) => {
-            // Only add if it's from another user (not our optimistic update)
-            if (msg.sender !== 'admin') {
+            const sessionId = msg.sessionId;
+            const targetSession = sessions.find(s => s.session_id === sessionId);
+            const isActiveSession = activeSession?.session_id === sessionId;
+
+            // Only add message to the active chat view (not for alerting — that's handled by admin_alert)
+            if (msg.sender !== 'admin' && isActiveSession) {
                 setMessages(prev => {
-                    // Check if already exists (prevent duplicates)
                     const exists = prev.some(m => m.content === msg.content && m.sender === msg.sender && Math.abs(new Date(m.created_at || 0).getTime() - new Date(msg.timestamp || msg.created_at || 0).getTime()) < 2000);
                     if (exists) return prev;
                     return [...prev, { ...msg, created_at: msg.timestamp || msg.created_at }];
@@ -144,18 +407,133 @@ function App() {
             fetchSessions();
         };
 
+        // admin_alert is broadcast to ALL sockets — this is the reliable notification path
+        const handleAdminAlert = (alert) => {
+            const sessionId = alert.sessionId;
+            const isActiveSession = activeSession?.session_id === sessionId;
+            const isHumanSession = !!alert.isHumanSession;
+            const userName = alert.userName || 'Customer';
+
+            // Always add to notification panel
+            setNotificationItems(prev => ([{
+                id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                sessionId,
+                sender: 'user',
+                userName,
+                preview: String(alert.content || '').slice(0, 120) || 'New message',
+                createdAt: alert.timestamp || new Date().toISOString(),
+                read: isActiveSession && document.hasFocus(),
+                isHumanSession,
+            }, ...prev]).slice(0, 40));
+
+            // Always play sound for every incoming customer message
+            playAlertTone(
+                isHumanSession ? 1040 : 920,
+                isHumanSession ? 0.36 : 0.30,
+                isHumanSession // repeat for human sessions
+            );
+
+            // Always show browser notification
+            maybeShowBrowserNotification(alert, isHumanSession, isActiveSession && document.hasFocus());
+
+            // Flash title for human sessions when not actively viewing that session
+            if (isHumanSession && !isActiveSession) {
+                startTitleFlash();
+            }
+
+            fetchSessions();
+        };
+
         const handleSessionUpdate = () => {
             fetchSessions();
         };
 
         socket.on('new_message', handleNewMessage);
+        socket.on('admin_alert', handleAdminAlert);
         socket.on('session_update', handleSessionUpdate);
 
         return () => {
             socket.off('new_message', handleNewMessage);
+            socket.off('admin_alert', handleAdminAlert);
             socket.off('session_update', handleSessionUpdate);
         };
-    }, [socket]);
+    }, [socket, sessions, activeSession, alertSoundEnabled]);
+
+    useEffect(() => {
+        const onFirstInteraction = () => {
+            unlockAlertAudio();
+            ensurePushServiceWorker().then(() => {
+                if ('Notification' in window && Notification.permission === 'granted') {
+                    return syncAdminPushSubscription();
+                }
+                if ('Notification' in window && Notification.permission === 'default') {
+                    return Notification.requestPermission().then(() => syncAdminPushSubscription()).catch(() => { });
+                }
+                return undefined;
+            }).finally(() => {
+                refreshNotificationPermission();
+            });
+        };
+
+        window.addEventListener('pointerdown', onFirstInteraction, { once: true });
+        return () => window.removeEventListener('pointerdown', onFirstInteraction);
+    }, []);
+
+    useEffect(() => {
+        ensurePushServiceWorker();
+        refreshNotificationPermission();
+    }, []);
+
+    useEffect(() => {
+        const onVisibility = () => refreshNotificationPermission();
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => document.removeEventListener('visibilitychange', onVisibility);
+    }, []);
+
+    useEffect(() => {
+        const baseTitle = 'Console';
+        if (unreadNotificationCount > 0 && !titleFlashRef.current) {
+            document.title = `(${unreadNotificationCount}) ${baseTitle}`;
+        } else if (unreadNotificationCount === 0 && !titleFlashRef.current) {
+            document.title = baseTitle;
+        }
+    }, [unreadNotificationCount]);
+
+    // Title flashing for urgent human-session messages
+    const startTitleFlash = () => {
+        if (titleFlashRef.current) return; // already flashing
+        let toggle = false;
+        titleFlashRef.current = setInterval(() => {
+            toggle = !toggle;
+            document.title = toggle ? '⚠️ HUMAN SUPPORT NEEDED' : `(${unreadNotificationCount || '!'}) Console`;
+        }, 1000);
+    };
+
+    const stopTitleFlash = () => {
+        if (titleFlashRef.current) {
+            clearInterval(titleFlashRef.current);
+            titleFlashRef.current = null;
+            const baseTitle = 'Console';
+            document.title = unreadNotificationCount > 0 ? `(${unreadNotificationCount}) ${baseTitle}` : baseTitle;
+        }
+    };
+
+    useEffect(() => {
+        if (!showNotifications) return;
+        const onDocClick = (event) => {
+            if (notificationPanelRef.current && !notificationPanelRef.current.contains(event.target)) {
+                setShowNotifications(false);
+            }
+        };
+        document.addEventListener('mousedown', onDocClick);
+        return () => document.removeEventListener('mousedown', onDocClick);
+    }, [showNotifications]);
+
+    useEffect(() => {
+        if (!activeSession?.session_id) return;
+        markSessionNotificationsRead(activeSession.session_id);
+        stopTitleFlash(); // Stop flashing when admin opens a session
+    }, [activeSession]);
 
     // Fetch Sessions
     const fetchSessions = async () => {
@@ -275,6 +653,12 @@ function App() {
         s.user_contact?.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
+    const unreadBySession = notificationItems.reduce((acc, n) => {
+        if (n.read) return acc;
+        acc[n.sessionId] = (acc[n.sessionId] || 0) + 1;
+        return acc;
+    }, {});
+
     // Group sessions by user for the chats sidebar
     const chatUserGroups = filteredSessions.reduce((acc, session) => {
         const key = session.user_contact || session.customer_name || session.session_id;
@@ -356,9 +740,91 @@ function App() {
                             </div>
                             <span className="font-bold text-lg tracking-tight text-white">Console</span>
                         </div>
-                        <button onClick={() => setIsSidebarOpen(false)} className="text-slate-500 hover:text-white transition-colors md:hidden">
-                            <X size={18} />
-                        </button>
+                        <div className="flex items-center gap-1.5" ref={notificationPanelRef}>
+                            <span className={`h-9 px-2.5 rounded-xl border text-[11px] font-semibold transition-all flex items-center ${notificationPermission === 'granted'
+                                ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-300'
+                                : notificationPermission === 'denied'
+                                    ? 'border-red-500/40 bg-red-500/10 text-red-300'
+                                    : notificationPermission === 'unsupported'
+                                        ? 'border-slate-500/30 bg-slate-500/10 text-slate-300'
+                                        : 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300'
+                                }`}>
+                                {getPushStatusLabel()}
+                            </span>
+                            {notificationPermission !== 'granted' && notificationPermission !== 'unsupported' && (
+                                <button
+                                    onClick={requestPushPermission}
+                                    className={`h-9 px-2.5 rounded-xl border text-[11px] font-semibold transition-all ${notificationPermission === 'denied'
+                                        ? 'border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20'
+                                        : 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20'
+                                        }`}
+                                    title={notificationPermission === 'denied' ? 'Open browser settings and allow Notifications for this site' : 'Enable browser push notifications'}
+                                >
+                                    {notificationPermission === 'denied' ? 'Fix Push' : 'Enable Push'}
+                                </button>
+                            )}
+                            <button
+                                onClick={() => setAlertSoundEnabled(v => !v)}
+                                className="w-9 h-9 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-all"
+                                title={alertSoundEnabled ? 'Mute alert sounds' : 'Enable alert sounds'}
+                            >
+                                {alertSoundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                            </button>
+                            <button
+                                onClick={() => setShowNotifications(v => !v)}
+                                className="relative w-9 h-9 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-all"
+                                title="Notifications"
+                            >
+                                {unreadNotificationCount > 0 ? <BellRing size={16} /> : <Bell size={16} />}
+                                {unreadNotificationCount > 0 && (
+                                    <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center border border-slate-900">
+                                        {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+                                    </span>
+                                )}
+                            </button>
+                            <button onClick={() => setIsSidebarOpen(false)} className="text-slate-500 hover:text-white transition-colors md:hidden">
+                                <X size={18} />
+                            </button>
+
+                            {showNotifications && (
+                                <div className="absolute top-12 right-0 w-80 max-h-96 overflow-y-auto custom-scrollbar rounded-2xl border border-white/10 bg-slate-900/95 backdrop-blur-xl shadow-2xl z-50">
+                                    <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+                                        <p className="text-xs font-semibold text-white uppercase tracking-wider">Notifications</p>
+                                        <button
+                                            onClick={() => setNotificationItems(prev => prev.map(n => ({ ...n, read: true })))}
+                                            className="text-[10px] text-blue-400 hover:text-blue-300"
+                                        >
+                                            Mark all read
+                                        </button>
+                                    </div>
+                                    {notificationItems.length === 0 ? (
+                                        <div className="px-4 py-8 text-center text-xs text-slate-500">No notifications yet</div>
+                                    ) : (
+                                        notificationItems.map(item => {
+                                            const targetSession = sessions.find(s => s.session_id === item.sessionId);
+                                            return (
+                                                <button
+                                                    key={item.id}
+                                                    onClick={() => {
+                                                        if (targetSession) openSession(targetSession, { closeSidebarOnMobile: true, switchToChats: true });
+                                                        setShowNotifications(false);
+                                                    }}
+                                                    className={`w-full text-left px-4 py-3 border-b border-white/5 hover:bg-white/5 transition-colors ${item.read ? 'opacity-70' : 'opacity-100'}`}
+                                                >
+                                                    <div className="flex items-center justify-between gap-2 mb-1">
+                                                        <p className="text-xs font-semibold text-white truncate">
+                                                            {item.userName || 'Customer'}
+                                                        </p>
+                                                        <span className="text-[10px] text-slate-500">{formatMsgTime(item.createdAt)}</span>
+                                                    </div>
+                                                    <p className="text-[11px] text-slate-400 line-clamp-2">{item.preview}</p>
+                                                </button>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* Navigation Tabs */}
@@ -373,6 +839,11 @@ function App() {
                             >
                                 <MessageSquare size={15} />
                                 Chats
+                                {unreadNotificationCount > 0 && (
+                                    <span className={`ml-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center ${currentView === 'chats' ? 'bg-white text-blue-700' : 'bg-red-500 text-white'}`}>
+                                        {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+                                    </span>
+                                )}
                             </button>
                             <button
                                 onClick={() => setCurrentView('analytics')}
@@ -424,6 +895,7 @@ function App() {
                             const isExpanded = expandedChatUsers.has(group.key);
                             const rep = group.latestSession || group.sessions[0];
                             const isOnline = rep.last_message_at && (new Date() - new Date(rep.last_message_at)) < 300000;
+                            const groupUnreadCount = group.sessions.reduce((sum, s) => sum + (unreadBySession[s.session_id] || 0), 0);
                             const toggleGroup = () => setExpandedChatUsers(prev => { const n = new Set(prev); n.has(group.key) ? n.delete(group.key) : n.add(group.key); return n; });
 
                             if (!hasMultiple) {
@@ -431,7 +903,7 @@ function App() {
                                 return (
                                     <button
                                         key={session.session_id}
-                                        onClick={() => { setActiveSession(session); if (window.innerWidth < 768) setIsSidebarOpen(false); }}
+                                        onClick={() => openSession(session, { closeSidebarOnMobile: true })}
                                         className={`w-full p-4  flex gap-4 rounded-2xl transition-all duration-200 group relative ${activeSession?.session_id === session.session_id ? 'bg-blue-600/10 border border-blue-500/20' : 'hover:bg-white/5 border border-transparent'}`}
                                     >
                                         <div className="relative shrink-0">
@@ -447,9 +919,16 @@ function App() {
                                         <div className="flex-1 min-w-0 pr-2">
                                             <div className="flex justify-between items-center mb-0.5">
                                                 <h3 className="font-semibold truncate text-[14px] text-white tracking-tight">{session.customer_name || 'Anonymous'}</h3>
-                                                <span className="text-[10px] text-slate-500 font-medium">
-                                                    {formatAdminDateTime(session.last_message_at)}
-                                                </span>
+                                                <div className="flex items-center gap-1.5 shrink-0">
+                                                    {groupUnreadCount > 0 && (
+                                                        <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center">
+                                                            {groupUnreadCount > 99 ? '99+' : groupUnreadCount}
+                                                        </span>
+                                                    )}
+                                                    <span className="text-[10px] text-slate-500 font-medium">
+                                                        {formatAdminDateTime(session.last_message_at)}
+                                                    </span>
+                                                </div>
                                             </div>
                                             {(session.user_contact || session.metadata?.user_contact || session.metadata?.user_email || session.metadata?.user_phone) &&
                                                 (session.customer_name !== session.user_contact &&
@@ -484,6 +963,11 @@ function App() {
                                             <div className="flex justify-between items-center mb-0.5">
                                                 <h3 className="font-semibold truncate text-[14px] text-white tracking-tight">{group.name}</h3>
                                                 <div className="flex items-center gap-1.5 shrink-0">
+                                                    {groupUnreadCount > 0 && (
+                                                        <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center">
+                                                            {groupUnreadCount > 99 ? '99+' : groupUnreadCount}
+                                                        </span>
+                                                    )}
                                                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-500/20 text-indigo-400">{group.sessions.length}</span>
                                                     <ChevronRight size={13} className={`text-slate-500 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`} />
                                                 </div>
@@ -499,7 +983,7 @@ function App() {
                                             {[...group.sessions].sort((a, b) => new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0)).map((session, idx) => (
                                                 <button
                                                     key={session.session_id}
-                                                    onClick={() => { setActiveSession(session); if (window.innerWidth < 768) setIsSidebarOpen(false); }}
+                                                    onClick={() => openSession(session, { closeSidebarOnMobile: true })}
                                                     className={`w-full px-3 py-2.5 flex gap-3 rounded-xl transition-all duration-150 text-left ${activeSession?.session_id === session.session_id ? 'bg-blue-600/10 border border-blue-500/20' : 'hover:bg-white/5 border border-transparent'}`}
                                                 >
                                                     <span className="text-[10px] text-slate-600 font-mono mt-0.5 shrink-0">#{idx + 1}</span>
@@ -507,6 +991,11 @@ function App() {
                                                         <p className="text-xs text-slate-300 line-clamp-2" title={session.last_message || ''}>{session.last_message || 'Started a conversation'}</p>
                                                         <p className="text-[10px] text-slate-500">{formatAdminDateTime(session.last_message_at)}</p>
                                                     </div>
+                                                    {(unreadBySession[session.session_id] || 0) > 0 && (
+                                                        <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center mt-0.5">
+                                                            {(unreadBySession[session.session_id] || 0) > 99 ? '99+' : (unreadBySession[session.session_id] || 0)}
+                                                        </span>
+                                                    )}
                                                     {activeSession?.session_id === session.session_id && (
                                                         <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0 mt-1 shadow-[0_0_6px_rgba(59,130,246,0.8)]"></div>
                                                     )}
@@ -748,7 +1237,7 @@ function App() {
                                                 {/* User group row */}
                                                 <div
                                                     className="grid grid-cols-[1fr_1fr_120px_60px_100px_120px_90px] gap-4 px-5 py-3.5 hover:bg-white/[0.03] transition-colors cursor-pointer items-start"
-                                                    onClick={() => { setActiveSession(session); setCurrentView('chats'); }}
+                                                    onClick={() => openSession(session, { switchToChats: true })}
                                                 >
                                                     {/* User */}
                                                     <div className="flex items-center gap-3 min-w-0">
@@ -849,7 +1338,7 @@ function App() {
                                                         <div
                                                             key={sub.session_id}
                                                             className="grid grid-cols-[1fr_1fr_120px_60px_100px_120px_90px] gap-4 pl-10 pr-5 py-2.5 bg-slate-900/30 hover:bg-white/[0.02] border-l-2 border-indigo-500/20 cursor-pointer transition-colors items-center"
-                                                            onClick={() => { setActiveSession(sub); setCurrentView('chats'); }}
+                                                            onClick={() => openSession(sub, { switchToChats: true })}
                                                         >
                                                             <div className="flex items-center gap-2 min-w-0">
                                                                 <span className="text-[10px] text-slate-600 font-mono shrink-0">#{idx + 1}</span>

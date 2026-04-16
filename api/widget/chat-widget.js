@@ -41,6 +41,10 @@
     let sessionMode = localStorage.getItem('n8n_chat_mode') || 'ai'; // 'ai' or 'human'
     let isTyping = false;
     let userInfo = JSON.parse(localStorage.getItem('n8n_chat_user_info') || 'null'); // {email, phone, name}
+    let alertAudioCtx = null;
+    let pendingUserDeliveryQueue = [];
+    const userMessageStatusEls = new Map();
+    let unreadCount = 0;
 
     // Global reset function (call from console: n8nChatReset())
     window.n8nChatReset = function () {
@@ -84,6 +88,28 @@
             pointer-events: none;
             transform: scale(0.85);
         }
+        .n8n-unread-badge {
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            min-width: 20px;
+            height: 20px;
+            padding: 0 5px;
+            border-radius: 10px;
+            background: #ef4444;
+            color: white;
+            font-size: 11px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid white;
+            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.4);
+            animation: n8nBadgePulse 2s ease-in-out infinite;
+            pointer-events: none;
+        }
+        .n8n-unread-badge.hidden { display: none; }
+        @keyframes n8nBadgePulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
         
         #n8n-chat-window {
             position: absolute;
@@ -283,6 +309,13 @@
             font-weight: 400;
             opacity: 0.5;
             margin-left: 6px;
+            white-space: nowrap;
+        }
+        .n8n-msg-status {
+            font-size: 10px;
+            font-weight: 600;
+            margin-left: 6px;
+            opacity: 0.8;
             white-space: nowrap;
         }
 
@@ -778,25 +811,8 @@
     styleSheet.innerText = styles;
     document.head.appendChild(styleSheet);
 
-    // ============================================
-    // ONESIGNAL PUSH NOTIFICATIONS
-    // ============================================
-    (function initOneSignal() {
-        // Skip if already loaded
-        if (window.OneSignal || document.querySelector('script[src*="OneSignalSDK"]')) return;
-
-        const osScript = document.createElement('script');
-        osScript.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
-        osScript.defer = true;
-        document.head.appendChild(osScript);
-
-        window.OneSignalDeferred = window.OneSignalDeferred || [];
-        window.OneSignalDeferred.push(async function (OneSignal) {
-            await OneSignal.init({
-                appId: "591d53f0-1ba6-4d65-954f-20aca14443d4",
-            });
-        });
-    })();
+    const syncPushIdentity = async () => {};
+    const ensurePushPermissionPrompt = async () => {};
 
     const widget = document.createElement('div');
     widget.id = 'n8n-chat-widget';
@@ -865,6 +881,7 @@
         </div>
         <button id="n8n-chat-button">
             <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+            <span id="n8n-unread-badge" class="n8n-unread-badge hidden"></span>
         </button>
     `;
     document.body.appendChild(widget);
@@ -980,6 +997,8 @@
         panelHistory.style.display = 'none';
         tabChat.classList.add('active');
         tabHistory.classList.remove('active');
+        syncPushIdentity();
+        ensurePushPermissionPrompt();
         setTimeout(() => { scrollToBottom(); showInitialSuggestions(); }, 100);
     }
 
@@ -1285,6 +1304,7 @@
             phone: isPhone && !isEmail ? contact : null
         };
         localStorage.setItem('n8n_chat_user_info', JSON.stringify(userInfo));
+        syncPushIdentity();
 
         const submitBtn = prechatForm.querySelector('.n8n-prechat-submit');
         submitBtn.disabled = true;
@@ -1386,7 +1406,7 @@
         return `${months[d.getMonth()]} ${d.getDate()}, ${timeStr}`;
     }
 
-    function addMessage(sender, content, timestamp = null) {
+    function addMessage(sender, content, timestamp = null, options = {}) {
         removeTypingIndicator();
 
         // Create wrapper div for label + message
@@ -1398,7 +1418,14 @@
         labelDiv.className = `n8n-msg-label n8n-msg-label-${sender}`;
         const timeSpan = `<span class="n8n-msg-time">${formatMsgTime(timestamp)}</span>`;
         if (sender === 'user') {
-            labelDiv.innerHTML = `You${timeSpan}`;
+            const localId = options.localId || `user_msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const status = options.status || '';
+            wrapperDiv.dataset.localId = localId;
+            labelDiv.innerHTML = `You${status ? `<span class="n8n-msg-status">${status}</span>` : ''}${timeSpan}`;
+            if (status) {
+                const statusEl = labelDiv.querySelector('.n8n-msg-status');
+                if (statusEl) userMessageStatusEls.set(localId, statusEl);
+            }
         } else if (sender === 'ai') {
             labelDiv.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:-1px;margin-right:4px"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>AI Bot' + timeSpan;
         } else if (sender === 'admin') {
@@ -1423,6 +1450,23 @@
         wrapperDiv.appendChild(msgDiv);
         chatMessages.appendChild(wrapperDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        return { wrapper: wrapperDiv, localId: wrapperDiv.dataset.localId || null };
+    }
+
+    function setUserMessageStatus(localId, status) {
+        if (!localId || !status) return;
+        const statusEl = userMessageStatusEls.get(localId);
+        if (!statusEl) return;
+        statusEl.textContent = status;
+    }
+
+    function markPendingUserMessagesSeen() {
+        for (const statusEl of userMessageStatusEls.values()) {
+            if (statusEl.textContent !== 'Seen') {
+                statusEl.textContent = 'Seen';
+            }
+        }
     }
 
     function addSystemMessage(content) {
@@ -1532,6 +1576,100 @@
         if (typing) typing.remove();
     }
 
+    function getAlertAudioCtx() {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return null;
+        if (!alertAudioCtx || alertAudioCtx.state === 'closed') {
+            alertAudioCtx = new Ctx();
+        }
+        return alertAudioCtx;
+    }
+
+    async function unlockAlertAudio() {
+        const ctx = getAlertAudioCtx();
+        if (!ctx) return;
+        if (ctx.state === 'suspended') {
+            try {
+                await ctx.resume();
+            } catch (err) {
+                console.warn('Audio resume failed:', err);
+            }
+        }
+    }
+
+    // Professional 3-note ascending chime (C5 → E5 → G5)
+    function playHumanAlertSound() {
+        try {
+            const ctx = getAlertAudioCtx();
+            if (!ctx) return;
+            if (ctx.state === 'suspended') return;
+            const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
+            const noteGap = 0.14;
+            const noteDur = 0.18;
+            notes.forEach((freq, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                const start = ctx.currentTime + i * noteGap;
+                gain.gain.setValueAtTime(0.0001, start);
+                gain.gain.exponentialRampToValueAtTime(0.08, start + 0.015);
+                gain.gain.setValueAtTime(0.08, start + noteDur - 0.05);
+                gain.gain.exponentialRampToValueAtTime(0.0001, start + noteDur);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(start);
+                osc.stop(start + noteDur + 0.01);
+            });
+        } catch (err) {
+            console.warn('Failed to play alert sound:', err);
+        }
+    }
+
+    // Request browser Notification permission
+    function requestNotificationPermission() {
+        if ('Notification' in window && Notification.permission === 'default') {
+            Notification.requestPermission().catch(() => {});
+        }
+    }
+
+    // Show browser notification when admin replies and chat is closed
+    function showBrowserNotification(content) {
+        if (!('Notification' in window)) return;
+        if (Notification.permission !== 'granted') return;
+        const isChatOpen = chatWindow.classList.contains('open');
+        if (isChatOpen && document.visibilityState === 'visible') return;
+        try {
+            const body = String(content || '').slice(0, 140) || 'You have a new message';
+            const n = new Notification(CONFIG.SITE_NAME + ' Support', {
+                body,
+                icon: undefined,
+                tag: 'n8n-chat-' + sessionId,
+                renotify: true
+            });
+            n.onclick = () => {
+                window.focus();
+                setChatOpen(true);
+                n.close();
+            };
+            setTimeout(() => n.close(), 8000);
+        } catch (err) {
+            console.warn('Browser notification failed:', err);
+        }
+    }
+
+    // Update unread badge on chat button
+    function updateUnreadBadge() {
+        const badge = document.getElementById('n8n-unread-badge');
+        if (!badge) return;
+        if (unreadCount > 0) {
+            badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+            badge.classList.remove('hidden');
+        } else {
+            badge.classList.add('hidden');
+        }
+    }
+
     async function setMode(mode, syncToServer = false) {
         if (sessionMode === mode && !syncToServer) return;
 
@@ -1572,8 +1710,7 @@
     // ============================================
     async function saveMessageToDB(sender, content) {
         try {
-            // Non-blocking for the UI
-            fetch(`${CONFIG.API_URL}/api/messages`, {
+            const response = await fetch(`${CONFIG.API_URL}/api/messages`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1582,9 +1719,16 @@
                     content,
                     metadata: getMetadata()
                 })
-            }).catch(err => console.error('Failed to save message:', err));
+            });
+
+            if (!response.ok) {
+                throw new Error(`Save failed: ${response.status}`);
+            }
+
+            return true;
         } catch (err) {
             console.error('Failed to save message:', err);
+            return false;
         }
     }
 
@@ -1649,6 +1793,7 @@
     // ============================================
     chatForm.onsubmit = async (e) => {
         e.preventDefault();
+        await unlockAlertAudio();
         clearSuggestions();
         const content = chatInput.value.trim();
 
@@ -1660,9 +1805,16 @@
             await uploadFile(fileToUpload);
             // If there was also a caption, send it as a separate text message
             if (content) {
-                addMessage('user', content);
+                const localId = `user_msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                addMessage('user', content, null, { localId, status: 'Sending' });
                 setLoading(true);
-                await saveMessageToDB('user', content);
+                const saved = await saveMessageToDB('user', content);
+                if (saved) {
+                    setUserMessageStatus(localId, 'Sent');
+                    pendingUserDeliveryQueue.push(localId);
+                } else {
+                    setUserMessageStatus(localId, 'Failed');
+                }
                 if (sessionMode === 'ai') {
                     showTypingIndicator();
                     try {
@@ -1695,12 +1847,19 @@
         if (!content) return;
 
         // Show user message immediately
-        addMessage('user', content);
+        const localId = `user_msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        addMessage('user', content, null, { localId, status: 'Sending' });
         chatInput.value = '';
         setLoading(true);
 
         // Save user message to database
-        await saveMessageToDB('user', content);
+        const saved = await saveMessageToDB('user', content);
+        if (saved) {
+            setUserMessageStatus(localId, 'Sent');
+            pendingUserDeliveryQueue.push(localId);
+        } else {
+            setUserMessageStatus(localId, 'Failed');
+        }
 
         // Check if user wants to chat with human
         const humanPhrases = ['chat with human', 'talk to human', 'speak with human', 'human agent', 'real person', 'live agent', 'talk to someone', 'human support'];
@@ -1816,11 +1975,25 @@
 
         // Listen for new messages (from human agents)
         socket.on('new_message', (msg) => {
+            if (msg.sessionId === sessionId && msg.sender === 'user' && pendingUserDeliveryQueue.length > 0) {
+                const pendingId = pendingUserDeliveryQueue.shift();
+                setUserMessageStatus(pendingId, 'Delivered');
+            }
+
             if (msg.sessionId === sessionId && msg.sender === 'admin') {
                 addMessage('admin', msg.content);
                 clearSuggestions(); // No AI chips in human mode
                 statusText.textContent = 'Agent replied • Connected';
                 setMode('human'); // Automatically switch to human mode if admin replies
+                playHumanAlertSound();
+                markPendingUserMessagesSeen();
+                // Browser notification + unread badge when chat is closed
+                const isChatOpen = chatWindow.classList.contains('open');
+                if (!isChatOpen || document.visibilityState !== 'visible') {
+                    unreadCount++;
+                    updateUnreadBadge();
+                }
+                showBrowserNotification(msg.content);
             }
         });
     }
@@ -1832,6 +2005,13 @@
         chatWindow.classList.toggle('open', isOpen);
         chatButton.classList.toggle('hidden', isOpen);
         if (isOpen) {
+            unlockAlertAudio();
+            ensurePushPermissionPrompt();
+            syncPushIdentity();
+            requestNotificationPermission();
+            // Clear unread badge
+            unreadCount = 0;
+            updateUnreadBadge();
             setTimeout(() => scrollToBottom(), 100);
         }
     }

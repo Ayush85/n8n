@@ -152,6 +152,24 @@ CREATE TABLE IF NOT EXISTS products (
 -- 5. INDEXES
 -- ============================================================
 
+-- ============================================================
+-- 5. PUSH SUBSCRIPTIONS TABLE
+-- ============================================================
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id            SERIAL PRIMARY KEY,
+    endpoint      TEXT UNIQUE NOT NULL,
+    p256dh        TEXT NOT NULL,
+    auth          TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'admin', -- 'admin' | 'user'
+    session_id    TEXT,
+    user_contact  TEXT,
+    external_id   TEXT,
+    user_agent    TEXT,
+    created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Messages indexes
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
@@ -166,6 +184,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_is_active    ON sessions(is_active);
 -- Users indexes
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
+
+-- Push subscription indexes
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_role ON push_subscriptions(role);
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_session_id ON push_subscriptions(session_id);
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_contact ON push_subscriptions(user_contact);
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_external_id ON push_subscriptions(external_id);
 
 -- Products indexes
 CREATE INDEX IF NOT EXISTS idx_products_slug  ON products(slug);

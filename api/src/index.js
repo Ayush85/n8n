@@ -9,6 +9,7 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import multer from 'multer';
 import path from 'path';
 import crypto from 'crypto';
+import webpush from 'web-push';
 import logger from './config/logger.js';
 import { MessageSchema } from './schemas/chat.js';
 
@@ -58,9 +59,139 @@ pool.on('error', (err) => {
     logger.error('Unexpected error on idle client', err);
 });
 
+const WEB_PUSH_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY;
+const WEB_PUSH_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY;
+const WEB_PUSH_SUBJECT = process.env.WEB_PUSH_SUBJECT || 'mailto:support@aydexis.com';
+const WEB_PUSH_ENABLED = Boolean(WEB_PUSH_PUBLIC_KEY && WEB_PUSH_PRIVATE_KEY);
+
+if (WEB_PUSH_ENABLED) {
+    webpush.setVapidDetails(WEB_PUSH_SUBJECT, WEB_PUSH_PUBLIC_KEY, WEB_PUSH_PRIVATE_KEY);
+    logger.info('Native web push configured (VAPID)');
+} else {
+    logger.warn('Native web push is disabled. Set WEB_PUSH_PUBLIC_KEY and WEB_PUSH_PRIVATE_KEY to enable it.');
+}
+
 // Health check
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/push/public-key', (req, res) => {
+    if (!WEB_PUSH_ENABLED) {
+        return res.status(503).json({ error: 'Web push is not configured on server' });
+    }
+    res.json({ publicKey: WEB_PUSH_PUBLIC_KEY });
+});
+
+app.post('/api/push/subscribe', async (req, res, next) => {
+    try {
+        const { role = 'admin', sessionId = null, userContact = null, externalId = null, subscription } = req.body || {};
+        if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+            return res.status(400).json({ error: 'Invalid subscription payload' });
+        }
+
+        const normalizedRole = String(role).toLowerCase() === 'user' ? 'user' : 'admin';
+        if (normalizedRole === 'admin' && !isAdminAuthorized(req)) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        await pool.query(
+            `INSERT INTO push_subscriptions
+                (endpoint, p256dh, auth, role, session_id, user_contact, external_id, user_agent, updated_at, last_seen_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+             ON CONFLICT (endpoint) DO UPDATE SET
+                p256dh = EXCLUDED.p256dh,
+                auth = EXCLUDED.auth,
+                role = EXCLUDED.role,
+                session_id = EXCLUDED.session_id,
+                user_contact = EXCLUDED.user_contact,
+                external_id = EXCLUDED.external_id,
+                user_agent = EXCLUDED.user_agent,
+                updated_at = NOW(),
+                last_seen_at = NOW()`,
+            [
+                subscription.endpoint,
+                subscription.keys.p256dh,
+                subscription.keys.auth,
+                normalizedRole,
+                sessionId,
+                userContact,
+                externalId,
+                req.headers['user-agent'] || null,
+            ]
+        );
+
+        res.json({ success: true });
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.post('/api/push/unsubscribe', async (req, res, next) => {
+    try {
+        const { endpoint, role = 'admin' } = req.body || {};
+        if (!endpoint) {
+            return res.status(400).json({ error: 'endpoint is required' });
+        }
+
+        const normalizedRole = String(role).toLowerCase() === 'user' ? 'user' : 'admin';
+        if (normalizedRole === 'admin' && !isAdminAuthorized(req)) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1 AND role = $2', [endpoint, normalizedRole]);
+        res.json({ success: true });
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.get('/api/push/subscriptions/stats', async (req, res, next) => {
+    try {
+        if (!isAdminAuthorized(req)) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const [adminResult, userResult] = await Promise.all([
+            pool.query("SELECT COUNT(*)::int AS count FROM push_subscriptions WHERE role = 'admin'"),
+            pool.query("SELECT COUNT(*)::int AS count FROM push_subscriptions WHERE role = 'user'")
+        ]);
+
+        const latest = await pool.query(
+            `SELECT role, endpoint, updated_at
+             FROM push_subscriptions
+             ORDER BY updated_at DESC
+             LIMIT 5`
+        );
+
+        res.json({
+            adminCount: adminResult.rows[0]?.count || 0,
+            userCount: userResult.rows[0]?.count || 0,
+            latest: latest.rows
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.post('/api/push/test-admin', async (req, res, next) => {
+    try {
+        if (!isAdminAuthorized(req)) {
+            return res.status(401).json({ error: 'Unauthorized' });
+        }
+
+        const { title = 'Test Push', body = 'Native push test from API', url } = req.body || {};
+        const result = await sendWebPushNotifications({
+            title,
+            body,
+            url: url || getPublicAppUrl(),
+            role: 'admin'
+        });
+
+        res.json({ success: true, ...result });
+    } catch (error) {
+        next(error);
+    }
 });
 
 // ============================================
@@ -151,6 +282,21 @@ app.post('/api/upload', upload.single('file'), async (req, res, next) => {
         });
         io.emit('session_update', { sessionId, lastMessage: `📎 ${req.file.originalname}` });
 
+        // Broadcast admin_alert to ALL connected sockets (dashboard notification)
+        io.emit('admin_alert', {
+            sessionId,
+            sender: 'user',
+            content: `📎 ${req.file.originalname}`,
+            isHumanSession: false,
+            timestamp: new Date()
+        });
+
+        await sendAdminPushNotification({
+            heading: 'New customer document',
+            content: `File received: ${req.file.originalname}`,
+            url: getPublicAppUrl(),
+        });
+
         res.json({ success: true, fileUrl, fileName: req.file.originalname, fileType: req.file.mimetype, fileSize: req.file.size });
     } catch (error) {
         logger.error('File upload error:', error);
@@ -161,42 +307,125 @@ app.post('/api/upload', upload.single('file'), async (req, res, next) => {
 // N8N Webhook URL (from environment or default)
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 
-// OneSignal Push Notification Helper
-async function sendPushNotification({ heading, content, url }) {
-    const appId = process.env.ONESIGNAL_APP_ID;
-    const apiKey = process.env.ONESIGNAL_API_KEY;
+function getPublicAppUrl() {
+    const explicit = process.env.PUBLIC_APP_URL;
+    if (explicit && explicit.trim()) return explicit.trim();
 
-    if (!appId || !apiKey) {
-        logger.warn('OneSignal credentials not configured, skipping push notification');
+    const corsOrigin = process.env.CORS_ORIGIN;
+    if (corsOrigin && corsOrigin.trim() && corsOrigin.trim() !== '*') {
+        return corsOrigin.trim();
+    }
+
+    return undefined;
+}
+
+async function ensurePushSubscriptionSchema() {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id            SERIAL PRIMARY KEY,
+                endpoint      TEXT UNIQUE NOT NULL,
+                p256dh        TEXT NOT NULL,
+                auth          TEXT NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'admin',
+                session_id    TEXT,
+                user_contact  TEXT,
+                external_id   TEXT,
+                user_agent    TEXT,
+                created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                updated_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_role ON push_subscriptions(role)');
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_session_id ON push_subscriptions(session_id)');
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_contact ON push_subscriptions(user_contact)');
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_push_subscriptions_external_id ON push_subscriptions(external_id)');
+    } catch (err) {
+        logger.error('Failed to ensure push_subscriptions schema:', err);
+    }
+}
+
+function isAdminAuthorized(req) {
+    const secret = process.env.ADMIN_SECRET;
+    if (!secret) return true;
+    const auth = req.headers.authorization || '';
+    return auth === `Bearer ${secret}`;
+}
+
+async function sendWebPushNotifications({ title, body, url, role = 'admin', sessionId = null, userContact = null }) {
+    if (!WEB_PUSH_ENABLED) return { sent: 0, staleRemoved: 0, skipped: true };
+
+    const params = [role];
+    const where = ['role = $1'];
+
+    if (sessionId) {
+        params.push(sessionId);
+        where.push(`session_id = $${params.length}`);
+    }
+    if (userContact) {
+        params.push(userContact);
+        where.push(`LOWER(user_contact) = LOWER($${params.length})`);
+    }
+
+    const subsResult = await pool.query(
+        `SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE ${where.join(' AND ')}`,
+        params
+    );
+
+    let sent = 0;
+    let staleRemoved = 0;
+
+    for (const sub of subsResult.rows) {
+        const subscription = {
+            endpoint: sub.endpoint,
+            keys: { p256dh: sub.p256dh, auth: sub.auth }
+        };
+
+        const payload = JSON.stringify({
+            title: title || 'New Notification',
+            body: body || 'You have a new notification',
+            url: url || getPublicAppUrl() || '/',
+            timestamp: Date.now()
+        });
+
+        try {
+            await webpush.sendNotification(subscription, payload, { TTL: 60 });
+            sent += 1;
+        } catch (err) {
+            const statusCode = err?.statusCode;
+            if (statusCode === 404 || statusCode === 410) {
+                await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [sub.endpoint]);
+                staleRemoved += 1;
+                continue;
+            }
+            logger.warn('Web push send failed for one subscription:', {
+                statusCode,
+                message: err?.message,
+            });
+        }
+    }
+
+    return { sent, staleRemoved, skipped: false };
+}
+
+async function sendAdminPushNotification({ heading, content, url }) {
+    const webPushResult = await sendWebPushNotifications({
+        title: heading,
+        body: content,
+        url,
+        role: 'admin'
+    });
+
+    if (webPushResult.sent > 0) {
+        logger.info(`Native web push sent to ${webPushResult.sent} admin subscriber(s)`);
         return;
     }
 
-    try {
-        const response = await fetch('https://api.onesignal.com/notifications', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Key ${apiKey}`
-            },
-            body: JSON.stringify({
-                app_id: appId,
-                included_segments: ['All'],
-                headings: { en: heading || 'New Notification' },
-                contents: { en: content || 'You have a new notification' },
-                url: url || undefined
-            })
-        });
-
-        const result = await response.json();
-        if (result.errors) {
-            logger.error('OneSignal notification error:', result.errors);
-        } else {
-            logger.info(`Push notification sent successfully (ID: ${result.id})`);
-        }
-    } catch (error) {
-        logger.error('Failed to send push notification:', error);
-    }
+    logger.warn('No active admin web-push subscription found for this notification.');
 }
+
+ensurePushSubscriptionSchema();
 
 // Helper function to parse n8n response (handles multiple layers of JSON stringification)
 function parseN8nResponse(data) {
@@ -327,6 +556,21 @@ app.post('/api/chat', async (req, res, next) => {
             // Notify via socket
             io.to(sessionId).emit('status_change', { sessionId, status: 'human' });
             io.emit('session_update', { sessionId, status: 'human' });
+
+            // Broadcast admin_alert for human handoff — urgent
+            io.emit('admin_alert', {
+                sessionId,
+                sender: 'user',
+                content: '🔴 Customer requested human support!',
+                isHumanSession: true,
+                timestamp: new Date()
+            });
+
+            await sendAdminPushNotification({
+                heading: 'Human support requested',
+                content: 'A customer requested to chat with a human agent.',
+                url: getPublicAppUrl(),
+            });
 
             // Emit the AI message to socket
             io.to(sessionId).emit('new_message', {
@@ -569,6 +813,28 @@ app.post('/api/messages', async (req, res, next) => {
 
         // 4. Update dashboard lists
         io.emit('session_update', { sessionId, lastMessage: content });
+        if (sender === 'user') {
+            // Broadcast admin_alert to ALL sockets so dashboard always receives it
+            const sessionResult = await pool.query(
+                'SELECT status, customer_name, user_contact FROM sessions WHERE session_id = $1 LIMIT 1',
+                [sessionId]
+            );
+            const sessionRow = sessionResult.rows[0];
+            io.emit('admin_alert', {
+                sessionId,
+                sender: 'user',
+                content,
+                userName: sessionRow?.customer_name || sessionRow?.user_contact || 'Customer',
+                isHumanSession: sessionRow?.status === 'human',
+                timestamp: new Date()
+            });
+
+            await sendAdminPushNotification({
+                heading: 'New customer message',
+                content: String(content || '').slice(0, 140) || 'You have a new message',
+                url: getPublicAppUrl(),
+            });
+        }
 
         logger.info(`Message received for session ${sessionId} from ${sender} | IP: ${clientIp}`);
         res.json({ success: true });
@@ -1402,6 +1668,23 @@ io.on('connection', (socket) => {
                 "UPDATE sessions SET status = 'human', updated_at = NOW() WHERE session_id = $1",
                 [sessionId]
             );
+
+            const sessionResult = await pool.query(
+                'SELECT user_contact FROM sessions WHERE session_id = $1 LIMIT 1',
+                [sessionId]
+            );
+            const userContact = sessionResult.rows[0]?.user_contact || null;
+            if (userContact) {
+                await sendWebPushNotifications({
+                    title: 'New support reply',
+                    body: content.length > 120 ? `${content.slice(0, 117)}...` : content,
+                    url: getPublicAppUrl(),
+                    role: 'user',
+                    userContact,
+                });
+            } else {
+                logger.warn(`Skipping user push for ${sessionId}; no user_contact available.`);
+            }
 
             // Notify all clients about status change
             io.to(sessionId).emit('status_change', { sessionId, status: 'human' });

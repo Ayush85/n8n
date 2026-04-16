@@ -37,6 +37,34 @@ docker compose ps
 - API health: `http://localhost:3001/health`
 - n8n (if running separately): `http://localhost:5678`
 
+## Native Web Push Setup
+
+This project now uses native browser Web Push (VAPID) for dashboard notifications.
+
+1. Generate VAPID keys:
+
+```bash
+cd api
+npx web-push generate-vapid-keys --json
+```
+
+2. Add the keys in root `.env`:
+
+```env
+WEB_PUSH_PUBLIC_KEY=...
+WEB_PUSH_PRIVATE_KEY=...
+WEB_PUSH_SUBJECT=mailto:support@your-domain.com
+VITE_WEB_PUSH_PUBLIC_KEY=...
+```
+
+3. Rebuild services:
+
+```bash
+docker compose up -d --build api dashboard
+```
+
+4. In dashboard, click `Enable Push` once to register browser subscription.
+
 ## Manual Development
 
 ### API

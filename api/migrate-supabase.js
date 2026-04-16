@@ -196,6 +196,27 @@ async function migrate() {
         `);
         console.log('✅ Products table created/verified');
 
+        // --------------------------------------------------------
+        // 5. PUSH SUBSCRIPTIONS TABLE
+        // --------------------------------------------------------
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id            SERIAL PRIMARY KEY,
+                endpoint      TEXT UNIQUE NOT NULL,
+                p256dh        TEXT NOT NULL,
+                auth          TEXT NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'admin',
+                session_id    TEXT,
+                user_contact  TEXT,
+                external_id   TEXT,
+                user_agent    TEXT,
+                created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                updated_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('✅ Push subscriptions table created/verified');
+
         // Final safety pass: ensure required session columns exist before indexing.
         // This protects older databases where prior conditional blocks may not have applied.
         await pool.query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_contact TEXT`);
@@ -222,6 +243,11 @@ async function migrate() {
             // Users
             `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)` ,
             `CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone)` ,
+            // Push subscriptions
+            `CREATE INDEX IF NOT EXISTS idx_push_subscriptions_role ON push_subscriptions(role)`,
+            `CREATE INDEX IF NOT EXISTS idx_push_subscriptions_session_id ON push_subscriptions(session_id)`,
+            `CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_contact ON push_subscriptions(user_contact)`,
+            `CREATE INDEX IF NOT EXISTS idx_push_subscriptions_external_id ON push_subscriptions(external_id)`,
             // Products
             `CREATE INDEX IF NOT EXISTS idx_products_slug  ON products(slug)`,
             `CREATE INDEX IF NOT EXISTS idx_products_name  ON products(name)`,
