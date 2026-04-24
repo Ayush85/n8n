@@ -622,22 +622,46 @@ app.post('/api/chat', async (req, res, next) => {
         const responseText = await response.text();
         logger.info(`N8N response received for session ${sessionId}`);
 
-        // Try to parse as JSON, otherwise return as text
-        let data;
-        try {
-            data = JSON.parse(responseText);
-        } catch (e) {
-            data = responseText;
+        let actualMessage;
+        let suggestions = [];
+
+        // Detect n8n streaming SSE format: multiple JSON lines with {type, content}
+        const isStreaming = responseText.includes('"type":"item"') || responseText.includes('"type":"begin"');
+
+        if (isStreaming) {
+            // Collect all "item" content chunks and assemble the full message
+            const lines = responseText.split('\n').filter(l => l.trim());
+            let assembled = '';
+            for (const line of lines) {
+                try {
+                    const chunk = JSON.parse(line);
+                    if (chunk.type === 'item' && typeof chunk.content === 'string') {
+                        assembled += chunk.content;
+                    }
+                } catch (_) { /* skip malformed lines */ }
+            }
+            // assembled is the raw JSON string e.g. {"output":"Hey!...","suggestions":[...]}
+            try {
+                const parsed = JSON.parse(assembled);
+                actualMessage = formatMessage(parsed.output || parsed.answer || parsed.response || assembled);
+                suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
+            } catch (_) {
+                actualMessage = formatMessage(assembled);
+            }
+        } else {
+            // Standard JSON response
+            let data;
+            try {
+                data = JSON.parse(responseText);
+            } catch (e) {
+                data = responseText;
+            }
+            actualMessage = parseN8nResponse(data);
+            const rawSuggestions = Array.isArray(data) ? data[0]?.suggestions : data?.suggestions;
+            suggestions = Array.isArray(rawSuggestions) ? rawSuggestions : [];
         }
 
-        // Parse the n8n response to extract the actual message
-        const actualMessage = parseN8nResponse(data);
-
         logger.info(`Parsed message from n8n:`, actualMessage);
-
-        // Suggestions must come from n8n/AI, not be generated in application code.
-        const rawSuggestions = Array.isArray(data) ? data[0]?.suggestions : data?.suggestions;
-        const suggestions = Array.isArray(rawSuggestions) ? rawSuggestions : [];
 
         // Return in a consistent format
         res.json({ output: actualMessage, suggestions });
