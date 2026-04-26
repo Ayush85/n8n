@@ -29,6 +29,8 @@
         CLIENT_ID: window.N8N_CHAT_CLIENT_ID || 'client_1',
         SITE_NAME: window.N8N_CHAT_SITE_NAME || 'Fatafat Sewa',
         PRIMARY_COLOR: window.N8N_CHAT_PRIMARY_COLOR || '#0f67b2',
+        WEB_PUSH_PUBLIC_KEY: window.N8N_CHAT_WEB_PUSH_PUBLIC_KEY || null,
+        PUSH_SW_PATH: window.N8N_CHAT_PUSH_SW_PATH || '/widget/push-sw.js',
         SOCKET_IO_CDN: 'https://cdn.socket.io/4.7.2/socket.io.min.js',
         MARKED_CDN: 'https://cdn.jsdelivr.net/npm/marked/marked.min.js',
     };
@@ -45,6 +47,8 @@
     let pendingUserDeliveryQueue = [];
     const userMessageStatusEls = new Map();
     let unreadCount = 0;
+    let pushRegistration = null;
+    let cachedPushPublicKey = null;
 
     // Global reset function (call from console: n8nChatReset())
     window.n8nChatReset = function () {
@@ -811,8 +815,111 @@
     styleSheet.innerText = styles;
     document.head.appendChild(styleSheet);
 
-    const syncPushIdentity = async () => {};
-    const ensurePushPermissionPrompt = async () => {};
+    function urlBase64ToUint8Array(base64String) {
+        const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; i += 1) {
+            outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+    }
+
+    async function fetchPushPublicKey() {
+        if (cachedPushPublicKey) return cachedPushPublicKey;
+        if (CONFIG.WEB_PUSH_PUBLIC_KEY) {
+            cachedPushPublicKey = CONFIG.WEB_PUSH_PUBLIC_KEY;
+            return cachedPushPublicKey;
+        }
+
+        try {
+            const response = await fetch(`${CONFIG.API_URL}/api/push/public-key`);
+            if (!response.ok) return null;
+            const data = await response.json();
+            if (!data?.publicKey) return null;
+            cachedPushPublicKey = data.publicKey;
+            return cachedPushPublicKey;
+        } catch (err) {
+            console.warn('Unable to fetch web-push public key:', err);
+            return null;
+        }
+    }
+
+    async function ensurePushServiceWorker() {
+        if (!window.isSecureContext) return null;
+        if (!('serviceWorker' in navigator)) return null;
+        if (pushRegistration) return pushRegistration;
+
+        try {
+            pushRegistration = await navigator.serviceWorker.register(CONFIG.PUSH_SW_PATH);
+            return pushRegistration;
+        } catch (err) {
+            console.warn('Push service worker registration failed:', err);
+            return null;
+        }
+    }
+
+    const syncPushIdentity = async () => {
+        if (!window.isSecureContext) return false;
+        if (!('Notification' in window) || Notification.permission !== 'granted') return false;
+        if (!userInfo?.contact) return false;
+
+        const [registration, publicKey] = await Promise.all([
+            ensurePushServiceWorker(),
+            fetchPushPublicKey(),
+        ]);
+
+        if (!registration || !registration.pushManager || !publicKey) return false;
+
+        try {
+            let subscription = await registration.pushManager.getSubscription();
+            if (!subscription) {
+                subscription = await registration.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(publicKey),
+                });
+            }
+
+            const response = await fetch(`${CONFIG.API_URL}/api/push/subscribe`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    role: 'user',
+                    sessionId,
+                    userContact: userInfo.contact,
+                    externalId: sessionId,
+                    subscription: subscription.toJSON(),
+                }),
+            });
+
+            if (!response.ok) {
+                console.warn('Push subscribe API request failed with status:', response.status);
+                return false;
+            }
+
+            return true;
+        } catch (err) {
+            console.warn('Failed to sync user push subscription:', err);
+            return false;
+        }
+    };
+
+    const ensurePushPermissionPrompt = async () => {
+        if (!window.isSecureContext) return;
+        if (!('Notification' in window)) return;
+        if (Notification.permission !== 'default') return;
+
+        const promptKey = 'n8n_chat_push_prompted_v1';
+        if (localStorage.getItem(promptKey)) return;
+        localStorage.setItem(promptKey, '1');
+
+        try {
+            await Notification.requestPermission();
+        } catch (err) {
+            console.warn('Notification permission request failed:', err);
+        }
+    };
 
     const widget = document.createElement('div');
     widget.id = 'n8n-chat-widget';
@@ -1025,6 +1132,7 @@
         // Update session ID
         sessionId = newSessionId;
         localStorage.setItem('n8n_chat_session_id', sessionId);
+        syncPushIdentity();
 
         // Update mode
         sessionMode = status;
@@ -1629,7 +1737,11 @@
     // Request browser Notification permission
     function requestNotificationPermission() {
         if ('Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission().catch(() => {});
+            Notification.requestPermission()
+                .then(() => syncPushIdentity())
+                .catch(() => {});
+        } else if ('Notification' in window && Notification.permission === 'granted') {
+            syncPushIdentity();
         }
     }
 
