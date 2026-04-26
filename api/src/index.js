@@ -24,7 +24,12 @@ const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json({ limit: '1mb' }));
 
-// Serve widget files
+// Serve widget files — push-sw.js needs a broad Service-Worker-Allowed header
+// so browsers permit registering it with scope '/' from any page on this origin.
+app.get('/widget/push-sw.js', (req, res, next) => {
+    res.setHeader('Service-Worker-Allowed', '/');
+    next();
+});
 app.use('/widget', express.static('widget'));
 
 const httpServer = createServer(app);
@@ -400,7 +405,7 @@ async function sendWebPushNotifications({ title, body, url, role = 'admin', sess
         });
 
         try {
-            await webpush.sendNotification(subscription, payload, { TTL: 60 });
+            await webpush.sendNotification(subscription, payload, { TTL: 86400 });
             sent += 1;
         } catch (err) {
             const statusCode = err?.statusCode;

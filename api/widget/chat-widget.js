@@ -860,7 +860,7 @@
         if (pushRegistration) return pushRegistration;
 
         try {
-            pushRegistration = await navigator.serviceWorker.register(CONFIG.PUSH_SW_PATH);
+            pushRegistration = await navigator.serviceWorker.register(CONFIG.PUSH_SW_PATH, { scope: '/' });
             return pushRegistration;
         } catch (err) {
             console.warn('Push service worker registration failed:', err);
