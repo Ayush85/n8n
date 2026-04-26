@@ -288,8 +288,16 @@
             color: #92400e;
             font-size: 12px;
             padding: 8px 14px;
-            border-radius: 20px;
+            border-radius: 12px;
+            text-align: center;
+            line-height: 1.6;
         }
+        .n8n-msg-system a {
+            color: #0f67b2;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .n8n-msg-system a:hover { text-decoration: underline; }
         .n8n-msg-label {
             font-size: 10px;
             font-weight: 600;
@@ -1577,10 +1585,14 @@
         }
     }
 
-    function addSystemMessage(content) {
+    function addSystemMessage(content, isHtml = false) {
         const msgDiv = document.createElement('div');
         msgDiv.className = 'n8n-msg n8n-msg-system';
-        msgDiv.innerText = content;
+        if (isHtml) {
+            msgDiv.innerHTML = content;
+        } else {
+            msgDiv.innerText = content;
+        }
         chatMessages.appendChild(msgDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
@@ -2004,7 +2016,12 @@
                     // Check if this is a human handoff response
                     if (aiResponse.handoff || wantsHuman) {
                         setMode('human', true); // Sync to server
-                        addSystemMessage('🔄 Switched to human support mode. Our team will respond shortly!');
+                        addSystemMessage(
+                            '🔄 Switched to human support mode. Our team will respond shortly!<br><br>' +
+                            '📱 Or reach us directly on WhatsApp:<br>' +
+                            '<a href="https://wa.me/+9779813001000?text=Hi!" target="_blank" rel="noopener noreferrer">+977 9813001000</a>',
+                            true
+                        );
                     }
                 } else {
                     throw new Error('Invalid AI response');
