@@ -811,42 +811,46 @@ function isHumanHandoffRequest(message) {
 // });
 
 
-// Proxy endpoint for n8n AI chat (with deep debugging + fixes)
+// FULL /api/chat route
 app.post('/api/chat', async (req, res, next) => {
     const startedAt = Date.now();
 
     try {
-        console.log('\n==============================');
+        console.log('\n======================================');
         console.log('🚀 /api/chat HIT');
         console.log('⏰ Time:', new Date().toISOString());
-        console.log('📦 Body:', JSON.stringify(req.body, null, 2));
+        console.log('📦 Request Body:', JSON.stringify(req.body, null, 2));
 
         const { action, sessionId, chatInput, metadata } = req.body;
 
-        console.log('🧾 Parsed Request Data:', {
+        console.log('🧾 Parsed Data:', {
             action,
             sessionId,
             chatInput,
             metadata
         });
 
-        // Validate required data
+        // ---------------------------
+        // Validate
+        // ---------------------------
         if (!sessionId) {
-            console.log('❌ Missing sessionId');
+            console.log('❌ sessionId missing');
             return res.status(400).json({ error: 'sessionId required' });
         }
 
         if (!chatInput) {
-            console.log('❌ Missing chatInput');
+            console.log('❌ chatInput missing');
             return res.status(400).json({ error: 'chatInput required' });
         }
 
-        // HUMAN HANDOFF
+        // ---------------------------
+        // Human Handoff
+        // ---------------------------
         if (isHumanHandoffRequest(chatInput)) {
             console.log('🙋 Human handoff triggered');
 
             const handoffMessage =
-                "Thank you for reaching out! Our support team has been notified and will connect with you within 30 minutes.";
+                "Thank you for reaching out! Our support team has been notified and will connect with you shortly.";
 
             await pool.query(
                 "UPDATE sessions SET status='human', updated_at=NOW() WHERE session_id=$1",
@@ -864,9 +868,9 @@ app.post('/api/chat', async (req, res, next) => {
             });
 
             io.to(sessionId).emit('new_message', {
-                sessionId,
                 sender: 'ai',
-                content: handoffMessage
+                content: handoffMessage,
+                timestamp: new Date().toISOString()
             });
 
             console.log('✅ Human handoff response sent');
@@ -878,23 +882,27 @@ app.post('/api/chat', async (req, res, next) => {
             });
         }
 
-        // Validate webhook
+        // ---------------------------
+        // Webhook check
+        // ---------------------------
         if (!N8N_WEBHOOK_URL) {
             console.log('❌ N8N_WEBHOOK_URL missing');
             return res.status(500).json({
-                error: 'N8N webhook not configured'
+                error: 'Webhook not configured'
             });
         }
 
         console.log('🌍 N8N_WEBHOOK_URL:', N8N_WEBHOOK_URL);
 
-        // Abort timeout
+        // ---------------------------
+        // Call n8n
+        // ---------------------------
         const controller = new AbortController();
 
         const timeoutId = setTimeout(() => {
-            console.log('⏰ Fetch timeout reached');
+            console.log('⏰ n8n timeout reached');
             controller.abort();
-        }, N8N_WEBHOOK_TIMEOUT_MS || 120000);
+        }, 120000);
 
         let response;
 
@@ -906,19 +914,19 @@ app.post('/api/chat', async (req, res, next) => {
                 headers: {
                     'Content-Type': 'application/json'
                 },
+                signal: controller.signal,
                 body: JSON.stringify({
                     action: action || 'sendMessage',
                     sessionId,
                     client_id: metadata?.client_id || null,
                     chatInput,
                     metadata: metadata || {}
-                }),
-                signal: controller.signal
+                })
             });
 
             clearTimeout(timeoutId);
 
-            console.log('✅ N8N responded');
+            console.log('✅ n8n responded');
             console.log('📌 Status:', response.status);
             console.log('📌 Status Text:', response.statusText);
 
@@ -930,36 +938,34 @@ app.post('/api/chat', async (req, res, next) => {
 
             if (err.name === 'AbortError') {
                 return res.status(504).json({
-                    error: 'N8N timeout'
+                    error: 'n8n timeout'
                 });
             }
 
             return res.status(500).json({
-                error: 'Unable to connect to n8n'
+                error: 'Unable to connect n8n'
             });
         }
 
         if (!response.ok) {
-            const errorText = await response.text();
+            const errText = await response.text();
 
-            console.log('❌ N8N bad response');
-            console.log(errorText);
+            console.log('❌ n8n bad response');
+            console.log(errText);
 
             return res.status(502).json({
-                error: 'N8N failed',
-                status: response.status,
-                details: errorText
+                error: 'n8n failed',
+                status: response.status
             });
         }
 
-        // IMPORTANT FIX:
-        // response.text() can hang if n8n keeps stream open.
-        // So use timeout race.
-
-        let responseText;
+        // ---------------------------
+        // Read response body
+        // ---------------------------
+        let responseText = '';
 
         try {
-            console.log('📥 Waiting for response body...');
+            console.log('📥 Waiting body...');
 
             responseText = await Promise.race([
                 response.text(),
@@ -968,51 +974,111 @@ app.post('/api/chat', async (req, res, next) => {
                 )
             ]);
 
-            console.log('📨 Raw Response:');
+            console.log('📨 Raw Response START');
             console.log(responseText);
+            console.log('📨 Raw Response END');
 
         } catch (err) {
-            console.log('❌ Reading body failed:', err.message);
+            console.log('❌ Body read failed:', err.message);
 
             return res.status(504).json({
-                error: 'Response body timeout'
+                error: 'Response timeout'
             });
         }
 
+        // ---------------------------
+        // Parse AI Response
+        // ---------------------------
         let actualMessage = '';
         let suggestions = [];
 
-        // Try JSON parse
-        try {
-            const data = JSON.parse(responseText);
+        const isStreaming =
+            responseText.includes('"type":"item"') &&
+            responseText.includes('"type":"begin"');
 
-            console.log('✅ JSON parsed');
+        if (isStreaming) {
+            console.log('🔄 Streaming response detected');
 
-            actualMessage =
-                data.output ||
-                data.answer ||
-                data.response ||
-                data.message ||
-                '';
+            const lines = responseText
+                .split('\n')
+                .filter(line => line.trim());
 
-            suggestions = Array.isArray(data.suggestions)
-                ? data.suggestions
-                : [];
+            let assembled = '';
 
-        } catch (err) {
-            console.log('⚠️ Not JSON response, plain text mode');
+            for (const line of lines) {
+                try {
+                    const chunk = JSON.parse(line);
 
-            actualMessage = responseText;
+                    if (
+                        chunk.type === 'item' &&
+                        typeof chunk.content === 'string'
+                    ) {
+                        assembled += chunk.content;
+                    }
+
+                } catch (err) {
+                    console.log('⚠️ Bad chunk skipped');
+                }
+            }
+
+            console.log('🧩 Assembled Stream:', assembled);
+
+            try {
+                const parsed = JSON.parse(assembled);
+
+                actualMessage =
+                    parsed.output ||
+                    parsed.answer ||
+                    parsed.response ||
+                    parsed.message ||
+                    '';
+
+                suggestions = Array.isArray(parsed.suggestions)
+                    ? parsed.suggestions
+                    : [];
+
+            } catch (err) {
+                actualMessage = assembled;
+            }
+
+        } else {
+            console.log('📦 Standard JSON response');
+
+            try {
+                const parsed = JSON.parse(responseText);
+
+                actualMessage =
+                    parsed.output ||
+                    parsed.answer ||
+                    parsed.response ||
+                    parsed.message ||
+                    '';
+
+                suggestions = Array.isArray(parsed.suggestions)
+                    ? parsed.suggestions
+                    : [];
+
+            } catch (err) {
+                actualMessage = responseText;
+            }
         }
 
         if (!actualMessage) {
             actualMessage = 'No response from AI.';
         }
 
-        console.log('💬 Final Message:', actualMessage);
-        console.log('💡 Suggestions:', suggestions);
+        // ---------------------------
+        // Console AI Response
+        // ---------------------------
+        console.log('\n🤖 ===============================');
+        console.log('🤖 AI FINAL RESPONSE:');
+        console.log(actualMessage);
+        console.log('🤖 Suggestions:', suggestions);
+        console.log('🤖 ===============================\n');
 
+        // ---------------------------
         // Save DB
+        // ---------------------------
         try {
             await pool.query(
                 "INSERT INTO messages(session_id,sender,content) VALUES($1,$2,$3)",
@@ -1025,7 +1091,9 @@ app.post('/api/chat', async (req, res, next) => {
             console.log('❌ DB Save Error:', dbErr.message);
         }
 
-        // Emit socket
+        // ---------------------------
+        // Socket Emit
+        // ---------------------------
         io.to(sessionId).emit('new_message', {
             sender: 'ai',
             content: actualMessage,
@@ -1035,8 +1103,12 @@ app.post('/api/chat', async (req, res, next) => {
 
         console.log('📤 Socket emitted');
 
-        console.log('✅ Sending final API response');
+        // ---------------------------
+        // Final Response
+        // ---------------------------
+        console.log('✅ Sending API response');
         console.log('⏱ Total Time:', Date.now() - startedAt, 'ms');
+        console.log('======================================\n');
 
         return res.json({
             output: actualMessage,
@@ -1045,11 +1117,11 @@ app.post('/api/chat', async (req, res, next) => {
         });
 
     } catch (error) {
-        console.log('🔥 FATAL ERROR /api/chat');
+        console.log('🔥 FATAL ERROR');
         console.log(error);
 
         return res.status(500).json({
-            error: 'Internal server error',
+            error: 'Internal Server Error',
             message: error.message
         });
     }
