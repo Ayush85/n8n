@@ -1894,6 +1894,13 @@
                 })
             });
 
+            // 202 Accepted means the API is processing asynchronously
+            // The response will come via Socket.IO event (new_message)
+            if (response.status === 202) {
+                console.log('✓ Chat request accepted (202) - waiting for response via Socket.IO');
+                return { accepted: true, awaitingSocketIo: true };
+            }
+
             if (!response.ok) {
                 console.error('❌ Proxy Error:', response.status, response.statusText);
                 const error = new Error(`Chat request failed: ${response.status}`);
@@ -1991,7 +1998,12 @@
                     try {
                         const aiResponse = await sendToN8nAI(content);
                         removeTypingIndicator();
-                        if (aiResponse && aiResponse.output) {
+                        
+                        // If API accepted request (202) but is processing async, just show "processing" and wait for Socket.IO
+                        if (aiResponse && aiResponse.awaitingSocketIo) {
+                            addSystemMessage('✓ Message processing... response coming shortly');
+                            // The response will arrive via Socket.IO new_message event, no need to do anything else
+                        } else if (aiResponse && aiResponse.output) {
                             addMessage('ai', aiResponse.output);
                                 if (!aiResponse.handoff) {
                                     if (Array.isArray(aiResponse.suggestions) && aiResponse.suggestions.length > 0) {
@@ -2056,7 +2068,11 @@
                 const aiResponse = await sendToN8nAI(content);
                 removeTypingIndicator();
 
-                if (aiResponse && aiResponse.output) {
+                // If API accepted request (202) but is processing async, just show "processing" and wait for Socket.IO
+                if (aiResponse && aiResponse.awaitingSocketIo) {
+                    addSystemMessage('✓ Message processing... response coming shortly');
+                    // The response will arrive via Socket.IO new_message event, no need to do anything else
+                } else if (aiResponse && aiResponse.output) {
                     // Display AI response
                     addMessage('ai', aiResponse.output);
                     lastAiMessage = {
