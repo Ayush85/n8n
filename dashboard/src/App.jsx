@@ -388,6 +388,15 @@ function App() {
             .catch(() => {});
     }, []);
 
+    // Once the push key is available, sync subscription if permission already granted.
+    // This fixes the race condition where the pointerdown handler fires before the key
+    // is fetched, causing syncAdminPushSubscription to exit early and never retry.
+    useEffect(() => {
+        if (!webPushPublicKey) return;
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+        syncAdminPushSubscription();
+    }, [webPushPublicKey]);
+
     // Initialize Socket (only once on mount)
     useEffect(() => {
         const newSocket = io(SOCKET_URL);
