@@ -1932,6 +1932,33 @@
         }
     }
 
+    async function pollForAiReply(previousAiContent, attempts = 8, intervalMs = 1000) {
+        const baseline = typeof previousAiContent === 'string' ? previousAiContent.trim() : '';
+
+        for (let attempt = 0; attempt < attempts; attempt += 1) {
+            try {
+                const response = await fetch(`${CONFIG.API_URL}/api/sessions/${sessionId}/messages`);
+                if (response.ok) {
+                    const msgs = await response.json();
+                    const latestAi = [...msgs].reverse().find(m => m.sender === 'ai' && typeof m.content === 'string' && m.content.trim());
+
+                    if (latestAi) {
+                        const latestContent = latestAi.content.trim();
+                        if (!baseline || latestContent !== baseline) {
+                            return latestAi;
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to poll for AI reply:', err);
+            }
+
+            await new Promise(resolve => setTimeout(resolve, intervalMs));
+        }
+
+        return null;
+    }
+
     // ============================================
     // HANDLE FORM SUBMIT
     // ============================================
@@ -1977,8 +2004,21 @@
                         }
                     } catch (err) {
                         removeTypingIndicator();
-                        addSystemMessage('⚠️ AI unavailable. Connecting to human support...');
-                        setMode('human');
+                        if (err && (err.status === 504 || /timed out/i.test(err.message || ''))) {
+                            const recovered = await pollForAiReply(lastAiMessage.content || content);
+                            if (recovered?.content) {
+                                addMessage('ai', recovered.content, recovered.created_at || null);
+                                lastAiMessage = {
+                                    content: recovered.content.trim(),
+                                    at: Date.now()
+                                };
+                            } else {
+                                addSystemMessage('⏳ AI is still working. The reply may appear shortly.');
+                            }
+                        } else {
+                            addSystemMessage('⚠️ AI unavailable. Connecting to human support...');
+                            setMode('human');
+                        }
                     }
                 } else {
                     statusText.textContent = 'Message sent • Waiting for response...';
@@ -2053,7 +2093,16 @@
             } catch (err) {
                 removeTypingIndicator();
                 if (err && (err.status === 504 || /timed out/i.test(err.message || ''))) {
-                    addSystemMessage('⏳ AI is still working. The reply may appear shortly.');
+                    const recovered = await pollForAiReply(lastAiMessage.content || content);
+                    if (recovered?.content) {
+                        addMessage('ai', recovered.content, recovered.created_at || null);
+                        lastAiMessage = {
+                            content: recovered.content.trim(),
+                            at: Date.now()
+                        };
+                    } else {
+                        addSystemMessage('⏳ AI is still working. The reply may appear shortly.');
+                    }
                 } else {
                     addSystemMessage('⚠️ AI unavailable. Connecting to human support...');
                     setMode('human');
