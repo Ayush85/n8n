@@ -49,6 +49,7 @@
     let unreadCount = parseInt(localStorage.getItem('n8n_chat_unread') || '0', 10);
     let pushRegistration = null;
     let cachedPushPublicKey = null;
+    let lastAiMessage = { content: '', at: 0 };
 
     // Global reset function (call from console: n8nChatReset())
     window.n8nChatReset = function () {
@@ -1568,7 +1569,20 @@
         chatMessages.appendChild(wrapperDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
 
+        if (sender === 'ai' && typeof content === 'string') {
+            lastAiMessage = {
+                content: content.trim(),
+                at: Date.now()
+            };
+        }
+
         return { wrapper: wrapperDiv, localId: wrapperDiv.dataset.localId || null };
+    }
+
+    function shouldIgnoreAiSocketMessage(content) {
+        const normalized = typeof content === 'string' ? content.trim() : '';
+        if (!normalized) return true;
+        return lastAiMessage.content === normalized && (Date.now() - lastAiMessage.at) < 5000;
     }
 
     function setUserMessageStatus(localId, status) {
@@ -1882,7 +1896,10 @@
 
             if (!response.ok) {
                 console.error('❌ Proxy Error:', response.status, response.statusText);
-                throw new Error(`Chat request failed: ${response.status}`);
+                const error = new Error(`Chat request failed: ${response.status}`);
+                error.status = response.status;
+                error.statusText = response.statusText;
+                throw error;
             }
 
             const data = await response.json();
@@ -2002,6 +2019,10 @@
                 if (aiResponse && aiResponse.output) {
                     // Display AI response
                     addMessage('ai', aiResponse.output);
+                    lastAiMessage = {
+                        content: aiResponse.output.trim(),
+                        at: Date.now()
+                    };
                     // Suggestions always come from the API (generated server-side from products DB)
                     if (!(aiResponse.handoff || wantsHuman)) {
                         if (Array.isArray(aiResponse.suggestions) && aiResponse.suggestions.length > 0) {
@@ -2031,8 +2052,12 @@
                 }
             } catch (err) {
                 removeTypingIndicator();
-                addSystemMessage('⚠️ AI unavailable. Connecting to human support...');
-                setMode('human');
+                if (err && (err.status === 504 || /timed out/i.test(err.message || ''))) {
+                    addSystemMessage('⏳ AI is still working. The reply may appear shortly.');
+                } else {
+                    addSystemMessage('⚠️ AI unavailable. Connecting to human support...');
+                    setMode('human');
+                }
             }
         } else {
             // HUMAN MODE: Message already saved, will be picked up by dashboard via socket
@@ -2110,6 +2135,17 @@
             if (msg.sessionId === sessionId && msg.sender === 'user' && pendingUserDeliveryQueue.length > 0) {
                 const pendingId = pendingUserDeliveryQueue.shift();
                 setUserMessageStatus(pendingId, 'Delivered');
+            }
+
+            if (msg.sessionId === sessionId && msg.sender === 'ai') {
+                if (shouldIgnoreAiSocketMessage(msg.content)) {
+                    return;
+                }
+
+                addMessage('ai', msg.content, msg.timestamp || null);
+                clearSuggestions();
+                statusText.textContent = 'AI replied • Connected';
+                return;
             }
 
             if (msg.sessionId === sessionId && msg.sender === 'admin') {
