@@ -560,255 +560,502 @@ function isHumanHandoffRequest(message) {
 }
 
 // Proxy endpoint for n8n AI chat (avoids CORS issues)
-app.post('/api/chat', async (req, res, next) => {
-    try {
-        const { action, sessionId, chatInput, metadata } = req.body;
-        const startedAt = Date.now();
+// app.post('/api/chat', async (req, res, next) => {
+//     try {
+//         const { action, sessionId, chatInput, metadata } = req.body;
+//         const startedAt = Date.now();
 
-        logger.info(`Proxying chat request to n8n for session ${sessionId}`, {
+//         logger.info(`Proxying chat request to n8n for session ${sessionId}`, {
+//             sessionId,
+//             action: action || 'sendMessage',
+//             hasMetadata: Boolean(metadata),
+//         });
+
+//         // Check if user wants to chat with human
+//         if (isHumanHandoffRequest(chatInput)) {
+//             logger.info(`Human handoff requested for session ${sessionId}`);
+
+//             const handoffMessage = "Thank you for reaching out! Our support team has been notified and will connect with you within 30 minutes. Please stay in the chat, and we'll be with you shortly! 🙋‍♂️";
+
+//             // Update session status to 'human'
+//             await pool.query(
+//                 "UPDATE sessions SET status = 'human', updated_at = NOW() WHERE session_id = $1",
+//                 [sessionId]
+//             );
+
+//             // Save the AI handoff response to database
+//             await pool.query(
+//                 'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
+//                 [sessionId, 'ai', handoffMessage]
+//             );
+
+//             // Notify via socket
+//             io.to(sessionId).emit('status_change', { sessionId, status: 'human' });
+//             io.emit('session_update', { sessionId, status: 'human' });
+
+//             // Broadcast admin_alert for human handoff — urgent
+//             io.emit('admin_alert', {
+//                 sessionId,
+//                 sender: 'user',
+//                 content: '🔴 Customer requested human support!',
+//                 isHumanSession: true,
+//                 timestamp: new Date()
+//             });
+
+//             await sendAdminPushNotification({
+//                 heading: 'Human support requested',
+//                 content: 'A customer requested to chat with a human agent.',
+//                 url: getPublicAppUrl(),
+//             });
+
+//             // Emit the AI message to socket
+//             io.to(sessionId).emit('new_message', {
+//                 sessionId,
+//                 sender: 'ai',
+//                 content: handoffMessage,
+//                 timestamp: new Date()
+//             });
+
+//             // Return human handoff response
+//             return res.json({
+//                 output: handoffMessage,
+//                 handoff: true,
+//                 saved: true,  // Tell widget not to save again
+//                 status: 'human'
+//             });
+//         }
+
+//         // Track if the client tab closes while waiting for n8n
+//         const userContact = metadata?.user_contact || null;
+//         let clientDisconnected = false;
+//         const onClientClose = () => { clientDisconnected = true; };
+//         req.on('close', onClientClose);
+
+//         if (!N8N_WEBHOOK_URL) {
+//             req.removeListener('close', onClientClose);
+//             logger.error(`AI webhook is not configured for session ${sessionId}`);
+//             return res.status(503).json({ error: 'AI webhook is not configured' });
+//         }
+
+//         const controller = new AbortController();
+//         const timeoutId = setTimeout(() => controller.abort(), N8N_WEBHOOK_TIMEOUT_MS);
+
+//         // Forward request to n8n webhook
+//         let response;
+//         try {
+//             response = await fetch(N8N_WEBHOOK_URL, {
+//                 method: 'POST',
+//                 headers: { 'Content-Type': 'application/json' },
+//                 body: JSON.stringify({
+//                     action: action || 'sendMessage',
+//                     sessionId,
+//                     client_id: metadata.client_id,
+//                     chatInput,
+//                     metadata
+//                 }),
+//                 signal: controller.signal
+//             });
+//         } catch (error) {
+//             clearTimeout(timeoutId);
+//             req.removeListener('close', onClientClose);
+
+//             if (error?.name === 'AbortError') {
+//                 logger.error(`N8N webhook timed out after ${N8N_WEBHOOK_TIMEOUT_MS}ms for session ${sessionId}`, {
+//                     sessionId,
+//                     action: action || 'sendMessage',
+//                     timeoutMs: N8N_WEBHOOK_TIMEOUT_MS,
+//                     clientDisconnected,
+//                 });
+//                 return res.status(504).json({ error: 'AI response timed out' });
+//             }
+
+//             logger.error(`N8N webhook request failed for session ${sessionId}`, {
+//                 sessionId,
+//                 action: action || 'sendMessage',
+//                 message: error?.message,
+//             });
+//             throw error;
+//         }
+
+//         clearTimeout(timeoutId);
+//         req.removeListener('close', onClientClose);
+
+//         logger.info(`N8N webhook responded for session ${sessionId}`, {
+//             sessionId,
+//             action: action || 'sendMessage',
+//             status: response.status,
+//             elapsedMs: Date.now() - startedAt,
+//         });
+
+//         if (!response.ok) {
+//             logger.error(`N8N webhook error: ${response.status} ${response.statusText}`, {
+//                 sessionId,
+//                 action: action || 'sendMessage',
+//                 status: response.status,
+//                 statusText: response.statusText,
+//                 elapsedMs: Date.now() - startedAt,
+//             });
+//             if (!clientDisconnected) {
+//                 return res.status(502).json({ error: 'AI service unavailable', status: response.status });
+//             }
+//             return;
+//         }
+
+//         // Keep connection alive while waiting for N8N response body
+//         // Send keep-alive headers so client doesn't timeout
+//         res.setHeader('Connection', 'keep-alive');
+//         res.setHeader('X-Processing', 'true');
+
+//         const responseText = await response.text();
+//         logger.info(`N8N response received for session ${sessionId}`, {
+//             sessionId,
+//             action: action || 'sendMessage',
+//             elapsedMs: Date.now() - startedAt,
+//             responseBytes: responseText.length,
+//         });
+
+//         let actualMessage;
+//         let suggestions = [];
+
+//         // Detect n8n streaming SSE format: multiple JSON lines with {type, content}
+//         const isStreaming = responseText.includes('"type":"item"') || responseText.includes('"type":"begin"');
+
+//         if (isStreaming) {
+//             // Collect all "item" content chunks and assemble the full message
+//             const lines = responseText.split('\n').filter(l => l.trim());
+//             let assembled = '';
+//             for (const line of lines) {
+//                 try {
+//                     const chunk = JSON.parse(line);
+//                     if (chunk.type === 'item' && typeof chunk.content === 'string') {
+//                         assembled += chunk.content;
+//                     }
+//                 } catch (_) { /* skip malformed lines */ }
+//             }
+//             // assembled is the raw JSON string e.g. {"output":"Hey!...","suggestions":[...]}
+//             try {
+//                 const parsed = JSON.parse(assembled);
+//                 actualMessage = formatMessage(parsed.output || parsed.answer || parsed.response || assembled);
+//                 suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
+//             } catch (_) {
+//                 actualMessage = formatMessage(assembled);
+//             }
+//         } else {
+//             // Standard JSON response
+//             let data;
+//             try {
+//                 data = JSON.parse(responseText);
+//             } catch (e) {
+//                 data = responseText;
+//             }
+//             actualMessage = parseN8nResponse(data);
+//             const rawSuggestions = Array.isArray(data) ? data[0]?.suggestions : data?.suggestions;
+//             suggestions = Array.isArray(rawSuggestions) ? rawSuggestions : [];
+//         }
+
+//         logger.info(`Parsed message from n8n:`, { actualMessage });
+
+//         // Always persist the AI response so it survives a closed tab
+//         if (sessionId && actualMessage) {
+//             await pool.query(
+//                 'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
+//                 [sessionId, 'ai', actualMessage]
+//             );
+//         }
+
+//         // Emit via Socket.IO so connected clients get the response immediately
+//         io.to(sessionId).emit('new_message', {
+//             sender: 'ai',
+//             content: actualMessage,
+//             timestamp: new Date().toISOString(),
+//             suggestions: suggestions
+//         });
+
+//         logger.info(`AI response emitted via Socket.IO for session ${sessionId}`, {
+//             sessionId,
+//             action: action || 'sendMessage',
+//             elapsedMs: Date.now() - startedAt,
+//         });
+
+//         if (clientDisconnected) {
+//             // Tab was closed while waiting — send a push notification so they know a reply is ready
+//             if (userContact && actualMessage) {
+//                 const pushBody = actualMessage.replace(/<[^>]+>/g, '').trim().slice(0, 120);
+//                 await sendWebPushNotifications({
+//                     title: 'New reply — Support',
+//                     body: pushBody || 'You have a new reply. Tap to view.',
+//                     url: getPublicAppUrl(),
+//                     role: 'user',
+//                     userContact,
+//                 }).catch(err => logger.warn('Push after tab-close failed:', err.message));
+//             }
+//             logger.info(`Chat request ended after client disconnect for session ${sessionId}`, {
+//                 sessionId,
+//                 action: action || 'sendMessage',
+//                 elapsedMs: Date.now() - startedAt,
+//             });
+//             return; // Response socket is gone, nothing more to do
+//         }
+
+//         // Return in a consistent format; saved:true tells the widget to skip its own DB save
+//         logger.info(`Chat request completed for session ${sessionId}`, {
+//             sessionId,
+//             action: action || 'sendMessage',
+//             elapsedMs: Date.now() - startedAt,
+//         });
+//         res.json({ output: actualMessage, suggestions, saved: true });
+//     } catch (error) {
+//         logger.error('Error proxying to n8n:', error);
+//         next(error);
+//     }
+// });
+
+
+// Proxy endpoint for n8n AI chat (with deep debugging + fixes)
+app.post('/api/chat', async (req, res, next) => {
+    const startedAt = Date.now();
+
+    try {
+        console.log('\n==============================');
+        console.log('🚀 /api/chat HIT');
+        console.log('⏰ Time:', new Date().toISOString());
+        console.log('📦 Body:', JSON.stringify(req.body, null, 2));
+
+        const { action, sessionId, chatInput, metadata } = req.body;
+
+        console.log('🧾 Parsed Request Data:', {
+            action,
             sessionId,
-            action: action || 'sendMessage',
-            hasMetadata: Boolean(metadata),
+            chatInput,
+            metadata
         });
 
-        // Check if user wants to chat with human
+        // Validate required data
+        if (!sessionId) {
+            console.log('❌ Missing sessionId');
+            return res.status(400).json({ error: 'sessionId required' });
+        }
+
+        if (!chatInput) {
+            console.log('❌ Missing chatInput');
+            return res.status(400).json({ error: 'chatInput required' });
+        }
+
+        // HUMAN HANDOFF
         if (isHumanHandoffRequest(chatInput)) {
-            logger.info(`Human handoff requested for session ${sessionId}`);
+            console.log('🙋 Human handoff triggered');
 
-            const handoffMessage = "Thank you for reaching out! Our support team has been notified and will connect with you within 30 minutes. Please stay in the chat, and we'll be with you shortly! 🙋‍♂️";
+            const handoffMessage =
+                "Thank you for reaching out! Our support team has been notified and will connect with you within 30 minutes.";
 
-            // Update session status to 'human'
             await pool.query(
-                "UPDATE sessions SET status = 'human', updated_at = NOW() WHERE session_id = $1",
+                "UPDATE sessions SET status='human', updated_at=NOW() WHERE session_id=$1",
                 [sessionId]
             );
 
-            // Save the AI handoff response to database
             await pool.query(
-                'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
+                "INSERT INTO messages(session_id,sender,content) VALUES($1,$2,$3)",
                 [sessionId, 'ai', handoffMessage]
             );
 
-            // Notify via socket
-            io.to(sessionId).emit('status_change', { sessionId, status: 'human' });
-            io.emit('session_update', { sessionId, status: 'human' });
-
-            // Broadcast admin_alert for human handoff — urgent
-            io.emit('admin_alert', {
+            io.to(sessionId).emit('status_change', {
                 sessionId,
-                sender: 'user',
-                content: '🔴 Customer requested human support!',
-                isHumanSession: true,
-                timestamp: new Date()
+                status: 'human'
             });
 
-            await sendAdminPushNotification({
-                heading: 'Human support requested',
-                content: 'A customer requested to chat with a human agent.',
-                url: getPublicAppUrl(),
-            });
-
-            // Emit the AI message to socket
             io.to(sessionId).emit('new_message', {
                 sessionId,
                 sender: 'ai',
-                content: handoffMessage,
-                timestamp: new Date()
+                content: handoffMessage
             });
 
-            // Return human handoff response
+            console.log('✅ Human handoff response sent');
+
             return res.json({
                 output: handoffMessage,
                 handoff: true,
-                saved: true,  // Tell widget not to save again
-                status: 'human'
+                saved: true
             });
         }
 
-        // Track if the client tab closes while waiting for n8n
-        const userContact = metadata?.user_contact || null;
-        let clientDisconnected = false;
-        const onClientClose = () => { clientDisconnected = true; };
-        req.on('close', onClientClose);
-
+        // Validate webhook
         if (!N8N_WEBHOOK_URL) {
-            req.removeListener('close', onClientClose);
-            logger.error(`AI webhook is not configured for session ${sessionId}`);
-            return res.status(503).json({ error: 'AI webhook is not configured' });
+            console.log('❌ N8N_WEBHOOK_URL missing');
+            return res.status(500).json({
+                error: 'N8N webhook not configured'
+            });
         }
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), N8N_WEBHOOK_TIMEOUT_MS);
+        console.log('🌍 N8N_WEBHOOK_URL:', N8N_WEBHOOK_URL);
 
-        // Forward request to n8n webhook
+        // Abort timeout
+        const controller = new AbortController();
+
+        const timeoutId = setTimeout(() => {
+            console.log('⏰ Fetch timeout reached');
+            controller.abort();
+        }, N8N_WEBHOOK_TIMEOUT_MS || 120000);
+
         let response;
+
         try {
+            console.log('📡 Sending request to n8n...');
+
             response = await fetch(N8N_WEBHOOK_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json'
+                },
                 body: JSON.stringify({
                     action: action || 'sendMessage',
                     sessionId,
-                    client_id: metadata.client_id,
+                    client_id: metadata?.client_id || null,
                     chatInput,
-                    metadata
+                    metadata: metadata || {}
                 }),
                 signal: controller.signal
             });
-        } catch (error) {
-            clearTimeout(timeoutId);
-            req.removeListener('close', onClientClose);
 
-            if (error?.name === 'AbortError') {
-                logger.error(`N8N webhook timed out after ${N8N_WEBHOOK_TIMEOUT_MS}ms for session ${sessionId}`, {
-                    sessionId,
-                    action: action || 'sendMessage',
-                    timeoutMs: N8N_WEBHOOK_TIMEOUT_MS,
-                    clientDisconnected,
+            clearTimeout(timeoutId);
+
+            console.log('✅ N8N responded');
+            console.log('📌 Status:', response.status);
+            console.log('📌 Status Text:', response.statusText);
+
+        } catch (err) {
+            clearTimeout(timeoutId);
+
+            console.log('❌ Fetch failed');
+            console.log(err);
+
+            if (err.name === 'AbortError') {
+                return res.status(504).json({
+                    error: 'N8N timeout'
                 });
-                return res.status(504).json({ error: 'AI response timed out' });
             }
 
-            logger.error(`N8N webhook request failed for session ${sessionId}`, {
-                sessionId,
-                action: action || 'sendMessage',
-                message: error?.message,
+            return res.status(500).json({
+                error: 'Unable to connect to n8n'
             });
-            throw error;
         }
-
-        clearTimeout(timeoutId);
-        req.removeListener('close', onClientClose);
-
-        logger.info(`N8N webhook responded for session ${sessionId}`, {
-            sessionId,
-            action: action || 'sendMessage',
-            status: response.status,
-            elapsedMs: Date.now() - startedAt,
-        });
 
         if (!response.ok) {
-            logger.error(`N8N webhook error: ${response.status} ${response.statusText}`, {
-                sessionId,
-                action: action || 'sendMessage',
+            const errorText = await response.text();
+
+            console.log('❌ N8N bad response');
+            console.log(errorText);
+
+            return res.status(502).json({
+                error: 'N8N failed',
                 status: response.status,
-                statusText: response.statusText,
-                elapsedMs: Date.now() - startedAt,
+                details: errorText
             });
-            if (!clientDisconnected) {
-                return res.status(502).json({ error: 'AI service unavailable', status: response.status });
-            }
-            return;
         }
 
-        // Keep connection alive while waiting for N8N response body
-        // Send keep-alive headers so client doesn't timeout
-        res.setHeader('Connection', 'keep-alive');
-        res.setHeader('X-Processing', 'true');
+        // IMPORTANT FIX:
+        // response.text() can hang if n8n keeps stream open.
+        // So use timeout race.
 
-        const responseText = await response.text();
-        logger.info(`N8N response received for session ${sessionId}`, {
-            sessionId,
-            action: action || 'sendMessage',
-            elapsedMs: Date.now() - startedAt,
-            responseBytes: responseText.length,
-        });
+        let responseText;
 
-        let actualMessage;
+        try {
+            console.log('📥 Waiting for response body...');
+
+            responseText = await Promise.race([
+                response.text(),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Body timeout')), 60000)
+                )
+            ]);
+
+            console.log('📨 Raw Response:');
+            console.log(responseText);
+
+        } catch (err) {
+            console.log('❌ Reading body failed:', err.message);
+
+            return res.status(504).json({
+                error: 'Response body timeout'
+            });
+        }
+
+        let actualMessage = '';
         let suggestions = [];
 
-        // Detect n8n streaming SSE format: multiple JSON lines with {type, content}
-        const isStreaming = responseText.includes('"type":"item"') || responseText.includes('"type":"begin"');
+        // Try JSON parse
+        try {
+            const data = JSON.parse(responseText);
 
-        if (isStreaming) {
-            // Collect all "item" content chunks and assemble the full message
-            const lines = responseText.split('\n').filter(l => l.trim());
-            let assembled = '';
-            for (const line of lines) {
-                try {
-                    const chunk = JSON.parse(line);
-                    if (chunk.type === 'item' && typeof chunk.content === 'string') {
-                        assembled += chunk.content;
-                    }
-                } catch (_) { /* skip malformed lines */ }
-            }
-            // assembled is the raw JSON string e.g. {"output":"Hey!...","suggestions":[...]}
-            try {
-                const parsed = JSON.parse(assembled);
-                actualMessage = formatMessage(parsed.output || parsed.answer || parsed.response || assembled);
-                suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
-            } catch (_) {
-                actualMessage = formatMessage(assembled);
-            }
-        } else {
-            // Standard JSON response
-            let data;
-            try {
-                data = JSON.parse(responseText);
-            } catch (e) {
-                data = responseText;
-            }
-            actualMessage = parseN8nResponse(data);
-            const rawSuggestions = Array.isArray(data) ? data[0]?.suggestions : data?.suggestions;
-            suggestions = Array.isArray(rawSuggestions) ? rawSuggestions : [];
+            console.log('✅ JSON parsed');
+
+            actualMessage =
+                data.output ||
+                data.answer ||
+                data.response ||
+                data.message ||
+                '';
+
+            suggestions = Array.isArray(data.suggestions)
+                ? data.suggestions
+                : [];
+
+        } catch (err) {
+            console.log('⚠️ Not JSON response, plain text mode');
+
+            actualMessage = responseText;
         }
 
-        logger.info(`Parsed message from n8n:`, { actualMessage });
+        if (!actualMessage) {
+            actualMessage = 'No response from AI.';
+        }
 
-        // Always persist the AI response so it survives a closed tab
-        if (sessionId && actualMessage) {
+        console.log('💬 Final Message:', actualMessage);
+        console.log('💡 Suggestions:', suggestions);
+
+        // Save DB
+        try {
             await pool.query(
-                'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
+                "INSERT INTO messages(session_id,sender,content) VALUES($1,$2,$3)",
                 [sessionId, 'ai', actualMessage]
             );
+
+            console.log('💾 Saved to DB');
+
+        } catch (dbErr) {
+            console.log('❌ DB Save Error:', dbErr.message);
         }
 
-        // Emit via Socket.IO so connected clients get the response immediately
+        // Emit socket
         io.to(sessionId).emit('new_message', {
             sender: 'ai',
             content: actualMessage,
-            timestamp: new Date().toISOString(),
-            suggestions: suggestions
+            suggestions,
+            timestamp: new Date().toISOString()
         });
 
-        logger.info(`AI response emitted via Socket.IO for session ${sessionId}`, {
-            sessionId,
-            action: action || 'sendMessage',
-            elapsedMs: Date.now() - startedAt,
+        console.log('📤 Socket emitted');
+
+        console.log('✅ Sending final API response');
+        console.log('⏱ Total Time:', Date.now() - startedAt, 'ms');
+
+        return res.json({
+            output: actualMessage,
+            suggestions,
+            saved: true
         });
 
-        if (clientDisconnected) {
-            // Tab was closed while waiting — send a push notification so they know a reply is ready
-            if (userContact && actualMessage) {
-                const pushBody = actualMessage.replace(/<[^>]+>/g, '').trim().slice(0, 120);
-                await sendWebPushNotifications({
-                    title: 'New reply — Support',
-                    body: pushBody || 'You have a new reply. Tap to view.',
-                    url: getPublicAppUrl(),
-                    role: 'user',
-                    userContact,
-                }).catch(err => logger.warn('Push after tab-close failed:', err.message));
-            }
-            logger.info(`Chat request ended after client disconnect for session ${sessionId}`, {
-                sessionId,
-                action: action || 'sendMessage',
-                elapsedMs: Date.now() - startedAt,
-            });
-            return; // Response socket is gone, nothing more to do
-        }
-
-        // Return in a consistent format; saved:true tells the widget to skip its own DB save
-        logger.info(`Chat request completed for session ${sessionId}`, {
-            sessionId,
-            action: action || 'sendMessage',
-            elapsedMs: Date.now() - startedAt,
-        });
-        res.json({ output: actualMessage, suggestions, saved: true });
     } catch (error) {
-        logger.error('Error proxying to n8n:', error);
-        next(error);
+        console.log('🔥 FATAL ERROR /api/chat');
+        console.log(error);
+
+        return res.status(500).json({
+            error: 'Internal server error',
+            message: error.message
+        });
     }
 });
+
+
 
 // Product Webhook - Receives product updates from Fatafat Sewa
 app.post('/webhook/products', async (req, res) => {
