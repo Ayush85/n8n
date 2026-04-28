@@ -563,8 +563,13 @@ function isHumanHandoffRequest(message) {
 app.post('/api/chat', async (req, res, next) => {
     try {
         const { action, sessionId, chatInput, metadata } = req.body;
+        const startedAt = Date.now();
 
-        logger.info(`Proxying chat request to n8n for session ${sessionId}`);
+        logger.info(`Proxying chat request to n8n for session ${sessionId}`, {
+            sessionId,
+            action: action || 'sendMessage',
+            hasMetadata: Boolean(metadata),
+        });
 
         // Check if user wants to chat with human
         if (isHumanHandoffRequest(chatInput)) {
@@ -628,6 +633,7 @@ app.post('/api/chat', async (req, res, next) => {
 
         if (!N8N_WEBHOOK_URL) {
             req.removeListener('close', onClientClose);
+            logger.error(`AI webhook is not configured for session ${sessionId}`);
             return res.status(503).json({ error: 'AI webhook is not configured' });
         }
 
@@ -654,18 +660,41 @@ app.post('/api/chat', async (req, res, next) => {
             req.removeListener('close', onClientClose);
 
             if (error?.name === 'AbortError') {
-                logger.error(`N8N webhook timed out after ${N8N_WEBHOOK_TIMEOUT_MS}ms for session ${sessionId}`);
+                logger.error(`N8N webhook timed out after ${N8N_WEBHOOK_TIMEOUT_MS}ms for session ${sessionId}`, {
+                    sessionId,
+                    action: action || 'sendMessage',
+                    timeoutMs: N8N_WEBHOOK_TIMEOUT_MS,
+                    clientDisconnected,
+                });
                 return res.status(504).json({ error: 'AI response timed out' });
             }
 
+            logger.error(`N8N webhook request failed for session ${sessionId}`, {
+                sessionId,
+                action: action || 'sendMessage',
+                message: error?.message,
+            });
             throw error;
         }
 
         clearTimeout(timeoutId);
         req.removeListener('close', onClientClose);
 
+        logger.info(`N8N webhook responded for session ${sessionId}`, {
+            sessionId,
+            action: action || 'sendMessage',
+            status: response.status,
+            elapsedMs: Date.now() - startedAt,
+        });
+
         if (!response.ok) {
-            logger.error(`N8N webhook error: ${response.status} ${response.statusText}`);
+            logger.error(`N8N webhook error: ${response.status} ${response.statusText}`, {
+                sessionId,
+                action: action || 'sendMessage',
+                status: response.status,
+                statusText: response.statusText,
+                elapsedMs: Date.now() - startedAt,
+            });
             if (!clientDisconnected) {
                 return res.status(502).json({ error: 'AI service unavailable', status: response.status });
             }
@@ -673,7 +702,12 @@ app.post('/api/chat', async (req, res, next) => {
         }
 
         const responseText = await response.text();
-        logger.info(`N8N response received for session ${sessionId}`);
+        logger.info(`N8N response received for session ${sessionId}`, {
+            sessionId,
+            action: action || 'sendMessage',
+            elapsedMs: Date.now() - startedAt,
+            responseBytes: responseText.length,
+        });
 
         let actualMessage;
         let suggestions = [];
@@ -736,10 +770,20 @@ app.post('/api/chat', async (req, res, next) => {
                     userContact,
                 }).catch(err => logger.warn('Push after tab-close failed:', err.message));
             }
+            logger.info(`Chat request ended after client disconnect for session ${sessionId}`, {
+                sessionId,
+                action: action || 'sendMessage',
+                elapsedMs: Date.now() - startedAt,
+            });
             return; // Response socket is gone, nothing more to do
         }
 
         // Return in a consistent format; saved:true tells the widget to skip its own DB save
+        logger.info(`Chat request completed for session ${sessionId}`, {
+            sessionId,
+            action: action || 'sendMessage',
+            elapsedMs: Date.now() - startedAt,
+        });
         res.json({ output: actualMessage, suggestions, saved: true });
     } catch (error) {
         logger.error('Error proxying to n8n:', error);
