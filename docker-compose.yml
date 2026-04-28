@@ -9,6 +9,7 @@ services:
     container_name: n8n-api
     restart: unless-stopped
     environment:
+      - DATABASE_URL=${DATABASE_URL}
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT}
       - DB_NAME=${DB_NAME}
@@ -30,7 +31,7 @@ services:
       - DO_SPACES_REGION=${DO_SPACES_REGION}
       - DO_SPACES_FOLDER=${DO_SPACES_FOLDER}
     ports:
-      - "3001:3001"
+      - "3002:3001"
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3001/health || exit 1"]
       interval: 30s
@@ -53,7 +54,7 @@ services:
       context: ./dashboard
       dockerfile: Dockerfile
       args:
-        - VITE_API_URL=${VITE_API_URL:-http://localhost:3001}
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:3002}
         - VITE_ADMIN_SECRET=${VITE_ADMIN_SECRET}
         - VITE_WEB_PUSH_PUBLIC_KEY=${VITE_WEB_PUSH_PUBLIC_KEY}
     container_name: n8n-dashboard

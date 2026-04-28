@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import dns from 'dns';
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -12,6 +13,8 @@ import crypto from 'crypto';
 import webpush from 'web-push';
 import logger from './config/logger.js';
 import { MessageSchema } from './schemas/chat.js';
+
+dns.setDefaultResultOrder('ipv4first');
 
 // OpenAI setup
 const openai = new OpenAI({
@@ -40,21 +43,33 @@ const io = new Server(httpServer, {
     }
 });
 
-// Database setup with Supabase-optimized pool configuration
-const pool = new Pool({
-    user: process.env.DB_USER || 'n8n',
-    host: process.env.DB_HOST || 'localhost',
-    database: process.env.DB_NAME || 'n8n_data',
-    password: process.env.DB_PASSWORD || 'n8n_password',
-    port: parseInt(process.env.DB_PORT || '5432'),
-    ssl: process.env.DB_HOST && !process.env.DB_HOST.includes('localhost') ? { rejectUnauthorized: false } : false,
-    max: 10,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
-    allowExitOnIdle: false,
-    keepAlive: true,
-    keepAliveInitialDelayMillis: 10000
-});
+// Database setup with Supabase-friendly configuration.
+const DATABASE_URL = process.env.DATABASE_URL?.trim();
+const pool = DATABASE_URL
+    ? new Pool({
+        connectionString: DATABASE_URL,
+        ssl: /localhost|127\.0\.0\.1/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },
+        max: 10,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
+        allowExitOnIdle: false,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10000
+    })
+    : new Pool({
+        user: process.env.DB_USER || 'n8n',
+        host: process.env.DB_HOST || 'localhost',
+        database: process.env.DB_NAME || 'n8n_data',
+        password: process.env.DB_PASSWORD || 'n8n_password',
+        port: parseInt(process.env.DB_PORT || '5432'),
+        ssl: process.env.DB_HOST && !process.env.DB_HOST.includes('localhost') ? { rejectUnauthorized: false } : false,
+        max: 10,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
+        allowExitOnIdle: false,
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10000
+    });
 
 pool.on('connect', () => {
     logger.info('Connected to the database');

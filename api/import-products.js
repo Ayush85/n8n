@@ -1,16 +1,25 @@
 import 'dotenv/config';
+import dns from 'dns';
 import pg from 'pg';
+
+dns.setDefaultResultOrder('ipv4first');
 
 const { Pool } = pg;
 
-const pool = new Pool({
-    host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT, 10),
-    database: process.env.DB_NAME,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    ssl: { rejectUnauthorized: false },
-});
+const DATABASE_URL = process.env.DATABASE_URL?.trim();
+const pool = DATABASE_URL
+    ? new Pool({
+        connectionString: DATABASE_URL,
+        ssl: /localhost|127\.0\.0\.1/.test(DATABASE_URL) ? false : { rejectUnauthorized: false },
+    })
+    : new Pool({
+        host: process.env.DB_HOST,
+        port: parseInt(process.env.DB_PORT, 10),
+        database: process.env.DB_NAME,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
+        ssl: { rejectUnauthorized: false },
+    });
 
 const API_BASE = 'https://api.fatafatsewa.com/api/get-all-products';
 const PER_PAGE = 100;

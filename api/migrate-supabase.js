@@ -1,16 +1,25 @@
-import pg from 'pg';
 import 'dotenv/config';
+import dns from 'dns';
+import pg from 'pg';
+
+dns.setDefaultResultOrder('ipv4first');
 
 const { Pool } = pg;
 
-const pool = new Pool({
-    user: process.env.DB_USER,
-    host: process.env.DB_HOST,
-    database: process.env.DB_NAME,
-    password: process.env.DB_PASSWORD,
-    port: parseInt(process.env.DB_PORT || '5432'),
-    ssl: { rejectUnauthorized: false } // Required for Supabase
-});
+const DATABASE_URL = process.env.DATABASE_URL?.trim();
+const pool = DATABASE_URL
+    ? new Pool({
+        connectionString: DATABASE_URL,
+        ssl: /localhost|127\.0\.0\.1/.test(DATABASE_URL) ? false : { rejectUnauthorized: false }
+    })
+    : new Pool({
+        user: process.env.DB_USER,
+        host: process.env.DB_HOST,
+        database: process.env.DB_NAME,
+        password: process.env.DB_PASSWORD,
+        port: parseInt(process.env.DB_PORT || '5432'),
+        ssl: { rejectUnauthorized: false } // Required for Supabase
+    });
 
 async function migrate() {
     try {
