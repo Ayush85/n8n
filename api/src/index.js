@@ -811,322 +811,82 @@ function isHumanHandoffRequest(message) {
 // });
 
 
-// FULL /api/chat route
-app.post('/api/chat', async (req, res, next) => {
-    const startedAt = Date.now();
-
+app.post('/api/chat', async (req, res) => {
     try {
-        console.log('\n======================================');
-        console.log('🚀 /api/chat HIT');
-        console.log('⏰ Time:', new Date().toISOString());
-        console.log('📦 Request Body:', JSON.stringify(req.body, null, 2));
+        const { sessionId, chatInput, metadata } = req.body;
 
-        const { action, sessionId, chatInput, metadata } = req.body;
-
-        console.log('🧾 Parsed Data:', {
-            action,
-            sessionId,
-            chatInput,
-            metadata
-        });
-
-        // ---------------------------
-        // Validate
-        // ---------------------------
-        if (!sessionId) {
-            console.log('❌ sessionId missing');
-            return res.status(400).json({ error: 'sessionId required' });
+        if (!sessionId || !chatInput) {
+            return res.status(400).json({
+                error: 'Missing data'
+            });
         }
 
-        if (!chatInput) {
-            console.log('❌ chatInput missing');
-            return res.status(400).json({ error: 'chatInput required' });
-        }
-
-        // ---------------------------
-        // Human Handoff
-        // ---------------------------
-        if (isHumanHandoffRequest(chatInput)) {
-            console.log('🙋 Human handoff triggered');
-
-            const handoffMessage =
-                "Thank you for reaching out! Our support team has been notified and will connect with you shortly.";
-
-            await pool.query(
-                "UPDATE sessions SET status='human', updated_at=NOW() WHERE session_id=$1",
-                [sessionId]
-            );
-
-            await pool.query(
-                "INSERT INTO messages(session_id,sender,content) VALUES($1,$2,$3)",
-                [sessionId, 'ai', handoffMessage]
-            );
-
-            io.to(sessionId).emit('status_change', {
+        const response = await fetch(N8N_WEBHOOK_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                action: 'sendMessage',
                 sessionId,
-                status: 'human'
-            });
-
-            io.to(sessionId).emit('new_message', {
-                sender: 'ai',
-                content: handoffMessage,
-                timestamp: new Date().toISOString()
-            });
-
-            console.log('✅ Human handoff response sent');
-
-            return res.json({
-                output: handoffMessage,
-                handoff: true,
-                saved: true
-            });
-        }
-
-        // ---------------------------
-        // Webhook check
-        // ---------------------------
-        if (!N8N_WEBHOOK_URL) {
-            console.log('❌ N8N_WEBHOOK_URL missing');
-            return res.status(500).json({
-                error: 'Webhook not configured'
-            });
-        }
-
-        console.log('🌍 N8N_WEBHOOK_URL:', N8N_WEBHOOK_URL);
-
-        // ---------------------------
-        // Call n8n
-        // ---------------------------
-        const controller = new AbortController();
-
-        const timeoutId = setTimeout(() => {
-            console.log('⏰ n8n timeout reached');
-            controller.abort();
-        }, 120000);
-
-        let response;
-
-        try {
-            console.log('📡 Sending request to n8n...');
-
-            response = await fetch(N8N_WEBHOOK_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                signal: controller.signal,
-                body: JSON.stringify({
-                    action: action || 'sendMessage',
-                    sessionId,
-                    client_id: metadata?.client_id || null,
-                    chatInput,
-                    metadata: metadata || {}
-                })
-            });
-
-            clearTimeout(timeoutId);
-
-            console.log('✅ n8n responded');
-            console.log('📌 Status:', response.status);
-            console.log('📌 Status Text:', response.statusText);
-
-        } catch (err) {
-            clearTimeout(timeoutId);
-
-            console.log('❌ Fetch failed');
-            console.log(err);
-
-            if (err.name === 'AbortError') {
-                return res.status(504).json({
-                    error: 'n8n timeout'
-                });
-            }
-
-            return res.status(500).json({
-                error: 'Unable to connect n8n'
-            });
-        }
+                client_id: metadata?.client_id,
+                chatInput,
+                metadata
+            })
+        });
 
         if (!response.ok) {
-            const errText = await response.text();
-
-            console.log('❌ n8n bad response');
-            console.log(errText);
-
-            return res.status(502).json({
-                error: 'n8n failed',
-                status: response.status
+            return res.status(500).json({
+                error: 'AI unavailable'
             });
         }
 
-        // ---------------------------
-        // Read response body
-        // ---------------------------
-        let responseText = '';
+        const text = await response.text();
 
-        try {
-            console.log('📥 Waiting body...');
+        // STREAM PARSE ONLY
+        const lines = text.split('\n');
 
-            responseText = await Promise.race([
-                response.text(),
-                new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Body timeout')), 60000)
-                )
-            ]);
+        let assembled = '';
 
-            console.log('📨 Raw Response START');
-            console.log(responseText);
-            console.log('📨 Raw Response END');
-
-        } catch (err) {
-            console.log('❌ Body read failed:', err.message);
-
-            return res.status(504).json({
-                error: 'Response timeout'
-            });
-        }
-
-        // ---------------------------
-        // Parse AI Response
-        // ---------------------------
-        let actualMessage = '';
-        let suggestions = [];
-
-        const isStreaming =
-            responseText.includes('"type":"item"') &&
-            responseText.includes('"type":"begin"');
-
-        if (isStreaming) {
-            console.log('🔄 Streaming response detected');
-
-            const lines = responseText
-                .split('\n')
-                .filter(line => line.trim());
-
-            let assembled = '';
-
-            for (const line of lines) {
-                try {
-                    const chunk = JSON.parse(line);
-
-                    if (
-                        chunk.type === 'item' &&
-                        typeof chunk.content === 'string'
-                    ) {
-                        assembled += chunk.content;
-                    }
-
-                } catch (err) {
-                    console.log('⚠️ Bad chunk skipped');
-                }
-            }
-
-            console.log('🧩 Assembled Stream:', assembled);
+        for (const line of lines) {
+            if (!line.includes('"type":"item"')) continue;
 
             try {
-                const parsed = JSON.parse(assembled);
-
-                actualMessage =
-                    parsed.output ||
-                    parsed.answer ||
-                    parsed.response ||
-                    parsed.message ||
-                    '';
-
-                suggestions = Array.isArray(parsed.suggestions)
-                    ? parsed.suggestions
-                    : [];
-
-            } catch (err) {
-                actualMessage = assembled;
-            }
-
-        } else {
-            console.log('📦 Standard JSON response');
-
-            try {
-                const parsed = JSON.parse(responseText);
-
-                actualMessage =
-                    parsed.output ||
-                    parsed.answer ||
-                    parsed.response ||
-                    parsed.message ||
-                    '';
-
-                suggestions = Array.isArray(parsed.suggestions)
-                    ? parsed.suggestions
-                    : [];
-
-            } catch (err) {
-                actualMessage = responseText;
-            }
+                const json = JSON.parse(line);
+                assembled += json.content || '';
+            } catch (_) {}
         }
 
-        if (!actualMessage) {
-            actualMessage = 'No response from AI.';
-        }
+        const ai = JSON.parse(assembled);
 
-        // ---------------------------
-        // Console AI Response
-        // ---------------------------
-        console.log('\n🤖 ===============================');
-        console.log('🤖 AI FINAL RESPONSE:');
-        console.log(actualMessage);
-        console.log('🤖 Suggestions:', suggestions);
-        console.log('🤖 ===============================\n');
+        const output = ai.output || '';
+        const suggestions = ai.suggestions || [];
 
-        // ---------------------------
-        // Save DB
-        // ---------------------------
-        try {
-            await pool.query(
-                "INSERT INTO messages(session_id,sender,content) VALUES($1,$2,$3)",
-                [sessionId, 'ai', actualMessage]
-            );
-
-            console.log('💾 Saved to DB');
-
-        } catch (dbErr) {
-            console.log('❌ DB Save Error:', dbErr.message);
-        }
-
-        // ---------------------------
-        // Socket Emit
-        // ---------------------------
+        // instant emit
         io.to(sessionId).emit('new_message', {
             sender: 'ai',
-            content: actualMessage,
-            suggestions,
-            timestamp: new Date().toISOString()
+            content: output,
+            suggestions
         });
 
-        console.log('📤 Socket emitted');
-
-        // ---------------------------
-        // Final Response
-        // ---------------------------
-        console.log('✅ Sending API response');
-        console.log('⏱ Total Time:', Date.now() - startedAt, 'ms');
-        console.log('======================================\n');
+        // background save
+        pool.query(
+            "INSERT INTO messages(session_id,sender,content) VALUES($1,$2,$3)",
+            [sessionId, 'ai', output]
+        ).catch(() => {});
 
         return res.json({
-            output: actualMessage,
+            output,
             suggestions,
             saved: true
         });
 
-    } catch (error) {
-        console.log('🔥 FATAL ERROR');
-        console.log(error);
-
+    } catch (err) {
         return res.status(500).json({
-            error: 'Internal Server Error',
-            message: error.message
+            error: 'Server error'
         });
     }
 });
-
 
 
 // Product Webhook - Receives product updates from Fatafat Sewa

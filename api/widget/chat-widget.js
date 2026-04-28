@@ -1567,7 +1567,15 @@
 
         wrapperDiv.appendChild(msgDiv);
         chatMessages.appendChild(wrapperDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        // Smooth-scroll the new message into view. Use scrollIntoView for reliability
+        try {
+            // If message contains images or other remote content, wait a tick
+            setTimeout(() => {
+                wrapperDiv.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            }, 50);
+        } catch (e) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
 
         if (sender === 'ai' && typeof content === 'string') {
             lastAiMessage = {
@@ -1609,7 +1617,13 @@
             msgDiv.innerText = content;
         }
         chatMessages.appendChild(msgDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        try {
+            setTimeout(() => {
+                msgDiv.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            }, 50);
+        } catch (e) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
     }
 
     // ============================================
