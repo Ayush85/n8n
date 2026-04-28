@@ -701,109 +701,109 @@ app.post('/api/chat', async (req, res, next) => {
             return;
         }
 
-        // Send 202 Accepted immediately (don't wait for full response body)
-        // The response body will be processed asynchronously and sent via Socket.IO
-        logger.info(`Chat request accepted (202) for session ${sessionId} - processing in background`, {
+        // Keep connection alive while waiting for N8N response body
+        // Send keep-alive headers so client doesn't timeout
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Processing', 'true');
+
+        const responseText = await response.text();
+        logger.info(`N8N response received for session ${sessionId}`, {
+            sessionId,
+            action: action || 'sendMessage',
+            elapsedMs: Date.now() - startedAt,
+            responseBytes: responseText.length,
+        });
+
+        let actualMessage;
+        let suggestions = [];
+
+        // Detect n8n streaming SSE format: multiple JSON lines with {type, content}
+        const isStreaming = responseText.includes('"type":"item"') || responseText.includes('"type":"begin"');
+
+        if (isStreaming) {
+            // Collect all "item" content chunks and assemble the full message
+            const lines = responseText.split('\n').filter(l => l.trim());
+            let assembled = '';
+            for (const line of lines) {
+                try {
+                    const chunk = JSON.parse(line);
+                    if (chunk.type === 'item' && typeof chunk.content === 'string') {
+                        assembled += chunk.content;
+                    }
+                } catch (_) { /* skip malformed lines */ }
+            }
+            // assembled is the raw JSON string e.g. {"output":"Hey!...","suggestions":[...]}
+            try {
+                const parsed = JSON.parse(assembled);
+                actualMessage = formatMessage(parsed.output || parsed.answer || parsed.response || assembled);
+                suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
+            } catch (_) {
+                actualMessage = formatMessage(assembled);
+            }
+        } else {
+            // Standard JSON response
+            let data;
+            try {
+                data = JSON.parse(responseText);
+            } catch (e) {
+                data = responseText;
+            }
+            actualMessage = parseN8nResponse(data);
+            const rawSuggestions = Array.isArray(data) ? data[0]?.suggestions : data?.suggestions;
+            suggestions = Array.isArray(rawSuggestions) ? rawSuggestions : [];
+        }
+
+        logger.info(`Parsed message from n8n:`, { actualMessage });
+
+        // Always persist the AI response so it survives a closed tab
+        if (sessionId && actualMessage) {
+            await pool.query(
+                'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
+                [sessionId, 'ai', actualMessage]
+            );
+        }
+
+        // Emit via Socket.IO so connected clients get the response immediately
+        io.to(sessionId).emit('new_message', {
+            sender: 'ai',
+            content: actualMessage,
+            timestamp: new Date().toISOString(),
+            suggestions: suggestions
+        });
+
+        logger.info(`AI response emitted via Socket.IO for session ${sessionId}`, {
             sessionId,
             action: action || 'sendMessage',
             elapsedMs: Date.now() - startedAt,
         });
-        res.status(202).json({ accepted: true, message: 'Processing AI response' });
 
-        // Process N8N response asynchronously in the background (don't await)
-        // This prevents the client from timing out while waiting for slow response body
-        response.text()
-            .then(async (responseText) => {
-                logger.info(`N8N response body received for session ${sessionId}`, {
-                    sessionId,
-                    action: action || 'sendMessage',
-                    elapsedMs: Date.now() - startedAt,
-                    responseBytes: responseText.length,
-                });
-
-                let actualMessage;
-                let suggestions = [];
-
-                // Detect n8n streaming SSE format: multiple JSON lines with {type, content}
-                const isStreaming = responseText.includes('"type":"item"') || responseText.includes('"type":"begin"');
-
-                if (isStreaming) {
-                    // Collect all "item" content chunks and assemble the full message
-                    const lines = responseText.split('\n').filter(l => l.trim());
-                    let assembled = '';
-                    for (const line of lines) {
-                        try {
-                            const chunk = JSON.parse(line);
-                            if (chunk.type === 'item' && typeof chunk.content === 'string') {
-                                assembled += chunk.content;
-                            }
-                        } catch (_) { /* skip malformed lines */ }
-                    }
-                    // assembled is the raw JSON string e.g. {"output":"Hey!...","suggestions":[...]}
-                    try {
-                        const parsed = JSON.parse(assembled);
-                        actualMessage = formatMessage(parsed.output || parsed.answer || parsed.response || assembled);
-                        suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
-                    } catch (_) {
-                        actualMessage = formatMessage(assembled);
-                    }
-                } else {
-                    // Standard JSON response
-                    let data;
-                    try {
-                        data = JSON.parse(responseText);
-                    } catch (e) {
-                        data = responseText;
-                    }
-                    actualMessage = parseN8nResponse(data);
-                    const rawSuggestions = Array.isArray(data) ? data[0]?.suggestions : data?.suggestions;
-                    suggestions = Array.isArray(rawSuggestions) ? rawSuggestions : [];
-                }
-
-                logger.info(`Parsed message from n8n:`, { actualMessage });
-
-                // Always persist the AI response so it survives a closed tab
-                if (sessionId && actualMessage) {
-                    await pool.query(
-                        'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
-                        [sessionId, 'ai', actualMessage]
-                    );
-                }
-
-                // Emit via Socket.IO so connected clients get the response immediately
-                io.to(sessionId).emit('new_message', {
-                    sender: 'ai',
-                    content: actualMessage,
-                    timestamp: new Date().toISOString(),
-                    suggestions: suggestions
-                });
-
-                logger.info(`AI response emitted via Socket.IO for session ${sessionId}`, {
-                    sessionId,
-                    action: action || 'sendMessage',
-                    elapsedMs: Date.now() - startedAt,
-                });
-
-                // Send push notification if user was offline
-                if (userContact && actualMessage) {
-                    const pushBody = actualMessage.replace(/<[^>]+>/g, '').trim().slice(0, 120);
-                    await sendWebPushNotifications({
-                        title: 'New reply — Support',
-                        body: pushBody || 'You have a new reply. Tap to view.',
-                        url: getPublicAppUrl(),
-                        role: 'user',
-                        userContact,
-                    }).catch(err => logger.warn('Push notification failed:', err.message));
-                }
-            })
-            .catch(err => {
-                logger.error(`Failed to process N8N response for session ${sessionId}`, {
-                    sessionId,
-                    action: action || 'sendMessage',
-                    error: err.message,
-                    elapsedMs: Date.now() - startedAt,
-                });
+        if (clientDisconnected) {
+            // Tab was closed while waiting — send a push notification so they know a reply is ready
+            if (userContact && actualMessage) {
+                const pushBody = actualMessage.replace(/<[^>]+>/g, '').trim().slice(0, 120);
+                await sendWebPushNotifications({
+                    title: 'New reply — Support',
+                    body: pushBody || 'You have a new reply. Tap to view.',
+                    url: getPublicAppUrl(),
+                    role: 'user',
+                    userContact,
+                }).catch(err => logger.warn('Push after tab-close failed:', err.message));
+            }
+            logger.info(`Chat request ended after client disconnect for session ${sessionId}`, {
+                sessionId,
+                action: action || 'sendMessage',
+                elapsedMs: Date.now() - startedAt,
             });
+            return; // Response socket is gone, nothing more to do
+        }
+
+        // Return in a consistent format; saved:true tells the widget to skip its own DB save
+        logger.info(`Chat request completed for session ${sessionId}`, {
+            sessionId,
+            action: action || 'sendMessage',
+            elapsedMs: Date.now() - startedAt,
+        });
+        res.json({ output: actualMessage, suggestions, saved: true });
     } catch (error) {
         logger.error('Error proxying to n8n:', error);
         next(error);
