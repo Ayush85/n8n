@@ -336,6 +336,7 @@ app.post('/api/upload', upload.single('file'), async (req, res, next) => {
 
 // N8N Webhook URL (from environment or default)
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
+const N8N_WEBHOOK_TIMEOUT_MS = parseInt(process.env.N8N_WEBHOOK_TIMEOUT_MS || '60000', 10);
 
 function getPublicAppUrl() {
     const explicit = process.env.PUBLIC_APP_URL;
@@ -625,19 +626,42 @@ app.post('/api/chat', async (req, res, next) => {
         const onClientClose = () => { clientDisconnected = true; };
         req.on('close', onClientClose);
 
-        // Forward request to n8n webhook
-        const response = await fetch(N8N_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                action: action || 'sendMessage',
-                sessionId,
-                client_id: metadata.client_id,
-                chatInput,
-                metadata
-            })
-        });
+        if (!N8N_WEBHOOK_URL) {
+            req.removeListener('close', onClientClose);
+            return res.status(503).json({ error: 'AI webhook is not configured' });
+        }
 
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), N8N_WEBHOOK_TIMEOUT_MS);
+
+        // Forward request to n8n webhook
+        let response;
+        try {
+            response = await fetch(N8N_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: action || 'sendMessage',
+                    sessionId,
+                    client_id: metadata.client_id,
+                    chatInput,
+                    metadata
+                }),
+                signal: controller.signal
+            });
+        } catch (error) {
+            clearTimeout(timeoutId);
+            req.removeListener('close', onClientClose);
+
+            if (error?.name === 'AbortError') {
+                logger.error(`N8N webhook timed out after ${N8N_WEBHOOK_TIMEOUT_MS}ms for session ${sessionId}`);
+                return res.status(504).json({ error: 'AI response timed out' });
+            }
+
+            throw error;
+        }
+
+        clearTimeout(timeoutId);
         req.removeListener('close', onClientClose);
 
         if (!response.ok) {
