@@ -51,7 +51,7 @@ import { format } from 'date-fns';
 
 const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 const ADMIN_SECRET = import.meta.env.VITE_ADMIN_SECRET || '';
-const WEB_PUSH_PUBLIC_KEY = import.meta.env.VITE_WEB_PUSH_PUBLIC_KEY || '';
+const VITE_PUSH_KEY = import.meta.env.VITE_WEB_PUSH_PUBLIC_KEY || '';
 
 // Helper: fetch with admin Authorization header pre-attached
 const adminFetch = (url, options = {}) => {
@@ -128,6 +128,7 @@ function App() {
     const [notificationPermission, setNotificationPermission] = useState(
         typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
     );
+    const [webPushPublicKey, setWebPushPublicKey] = useState(VITE_PUSH_KEY);
     const messagesEndRef = useRef(null);
     const notificationPanelRef = useRef(null);
     const alertAudioCtxRef = useRef(null);
@@ -168,7 +169,7 @@ function App() {
     };
 
     const syncAdminPushSubscription = async (forceRefresh = false) => {
-        if (!WEB_PUSH_PUBLIC_KEY) return false;
+        if (!webPushPublicKey) return false;
         if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
 
         const registration = await ensurePushServiceWorker();
@@ -200,7 +201,7 @@ function App() {
             if (!subscription) {
                 subscription = await registration.pushManager.subscribe({
                     userVisibleOnly: true,
-                    applicationServerKey: urlBase64ToUint8Array(WEB_PUSH_PUBLIC_KEY),
+                    applicationServerKey: urlBase64ToUint8Array(webPushPublicKey),
                 });
             }
 
@@ -223,7 +224,7 @@ function App() {
     const requestPushPermission = async () => {
         await unlockAlertAudio();
 
-        if (!WEB_PUSH_PUBLIC_KEY) {
+        if (!webPushPublicKey) {
             alert('Web push is not configured. Please set VITE_WEB_PUSH_PUBLIC_KEY in dashboard environment.');
             return;
         }
@@ -247,7 +248,7 @@ function App() {
     };
 
     const getPushStatusLabel = () => {
-        if (!WEB_PUSH_PUBLIC_KEY) return 'Push: Config Missing';
+        if (!webPushPublicKey) return 'Push: Config Missing';
         if (notificationPermission === 'granted') return 'Push: On';
         if (notificationPermission === 'denied') return 'Push: Blocked';
         if (notificationPermission === 'unsupported') return 'Push: N/A';
@@ -377,6 +378,15 @@ function App() {
         if (switchToChats) setCurrentView('chats');
         if (closeSidebarOnMobile && window.innerWidth < 768) setIsSidebarOpen(false);
     };
+
+    // Fetch push public key from API at runtime (fallback when VITE_WEB_PUSH_PUBLIC_KEY is not baked in)
+    useEffect(() => {
+        if (VITE_PUSH_KEY) return; // already have it from build-time env
+        fetch(`${SOCKET_URL}/api/push/public-key`)
+            .then(r => r.ok ? r.json() : null)
+            .then(data => { if (data?.publicKey) setWebPushPublicKey(data.publicKey); })
+            .catch(() => {});
+    }, []);
 
     // Initialize Socket (only once on mount)
     useEffect(() => {
