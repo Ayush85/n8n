@@ -1027,73 +1027,127 @@ app.post('/webhook/products', async (req, res) => {
     }
 });
 
-// API endpoint for external inputs (n8n or direct widget)
-app.post('/api/messages', async (req, res, next) => {
+// FAST OPTIMIZED /api/messages
+app.post('/api/messages', async (req, res) => {
     try {
-        const validatedData = MessageSchema.parse(req.body);
-        const { sessionId, sender, content, metadata } = validatedData;
+        const data = MessageSchema.parse(req.body);
 
-        // Get client IP from request
-        const clientIp = req.headers['x-forwarded-for']?.split(',')[0] || req.socket?.remoteAddress || 'unknown';
+        const { sessionId, sender, content, metadata } = data;
 
-        // Merge IP into metadata
-        const enrichedMetadata = { ...metadata, ip_address: clientIp };
+        if (!sessionId || !sender || !content) {
+            return res.status(400).json({
+                error: 'Missing required fields'
+            });
+        }
 
-        // 1. Ensure session exists FIRST (before inserting message due to foreign key constraint)
-        await pool.query(
-            `INSERT INTO sessions (session_id, status, metadata) 
-             VALUES ($1, $2, $3) 
-             ON CONFLICT (session_id) DO UPDATE SET 
-                updated_at = NOW(),
-                metadata = COALESCE(sessions.metadata, '{}')::jsonb || $3::jsonb`,
-            [sessionId, 'ai', JSON.stringify(enrichedMetadata)]
-        );
+        // Faster IP detection
+        const clientIp =
+            req.headers['x-forwarded-for']?.split(',')[0] ||
+            req.socket.remoteAddress ||
+            '';
 
-        // 2. Save message to database
-        await pool.query(
-            'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
-            [sessionId, sender, content]
-        );
+        const enrichedMetadata = {
+            ...metadata,
+            ip_address: clientIp
+        };
 
-        // 3. Emit to socket room for this session
-        io.to(sessionId).emit('new_message', {
+        // ----------------------------------
+        // Run DB queries in parallel
+        // ----------------------------------
+        await Promise.all([
+            pool.query(
+                `
+                INSERT INTO sessions (session_id, status, metadata)
+                VALUES ($1, 'ai', $2)
+                ON CONFLICT (session_id)
+                DO UPDATE SET
+                    updated_at = NOW(),
+                    metadata = sessions.metadata || $2::jsonb
+                `,
+                [sessionId, JSON.stringify(enrichedMetadata)]
+            ),
+
+            pool.query(
+                `
+                INSERT INTO messages (session_id, sender, content)
+                VALUES ($1,$2,$3)
+                `,
+                [sessionId, sender, content]
+            )
+        ]);
+
+        // ----------------------------------
+        // Instant socket emit
+        // ----------------------------------
+        const payload = {
             sessionId,
             sender,
             content,
-            timestamp: new Date()
+            timestamp: new Date().toISOString()
+        };
+
+        io.to(sessionId).emit('new_message', payload);
+
+        io.emit('session_update', {
+            sessionId,
+            lastMessage: content
         });
 
-        // 4. Update dashboard lists
-        io.emit('session_update', { sessionId, lastMessage: content });
-        if (sender === 'user') {
-            // Broadcast admin_alert to ALL sockets so dashboard always receives it
-            const sessionResult = await pool.query(
-                'SELECT status, customer_name, user_contact FROM sessions WHERE session_id = $1 LIMIT 1',
-                [sessionId]
-            );
-            const sessionRow = sessionResult.rows[0];
-            io.emit('admin_alert', {
-                sessionId,
-                sender: 'user',
-                content,
-                userName: sessionRow?.customer_name || sessionRow?.user_contact || 'Customer',
-                isHumanSession: sessionRow?.status === 'human',
-                timestamp: new Date()
-            });
+        // ----------------------------------
+        // Fast response first
+        // ----------------------------------
+        res.json({
+            success: true
+        });
 
-            if (sessionRow?.status === 'human') {
-                await sendAdminPushNotification({
-                    heading: `Message from ${sessionRow?.customer_name || sessionRow?.user_contact || 'Customer'}`,
-                    content: String(content || '').slice(0, 140) || 'You have a new message',
-                    url: getPublicAppUrl(),
+        // ----------------------------------
+        // Background admin logic
+        // ----------------------------------
+        if (sender === 'user') {
+            try {
+                const result = await pool.query(
+                    `
+                    SELECT status, customer_name, user_contact
+                    FROM sessions
+                    WHERE session_id = $1
+                    LIMIT 1
+                    `,
+                    [sessionId]
+                );
+
+                const row = result.rows[0];
+
+                io.emit('admin_alert', {
+                    sessionId,
+                    sender: 'user',
+                    content,
+                    userName:
+                        row?.customer_name ||
+                        row?.user_contact ||
+                        'Customer',
+                    isHumanSession: row?.status === 'human',
+                    timestamp: new Date().toISOString()
                 });
-            }
+
+                if (row?.status === 'human') {
+                    sendAdminPushNotification({
+                        heading: `Message from ${
+                            row?.customer_name ||
+                            row?.user_contact ||
+                            'Customer'
+                        }`,
+                        content: String(content).slice(0, 140),
+                        url: getPublicAppUrl()
+                    }).catch(() => {});
+                }
+
+            } catch (_) {}
         }
 
-        logger.info(`Message received for session ${sessionId} from ${sender} | IP: ${clientIp}`);
-        res.json({ success: true });
     } catch (error) {
-        next(error);
+        return res.status(500).json({
+            error: 'Server Error'
+        });
     }
 });
 
