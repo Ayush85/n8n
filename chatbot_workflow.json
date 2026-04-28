@@ -1,520 +1,493 @@
 {
-    "name": "Production Ecommerce Chatbot with Human Handoff",
-    "nodes": [
-        {
-            "parameters": {
-                "options": {
-                    "allowedOrigins": "*"
-                }
-            },
-            "id": "trigger-001",
-            "name": "When chat message received",
-            "type": "n8n-nodes-base.chatTrigger",
-            "typeVersion": 1.1,
-            "position": [
-                -400,
-                0
-            ],
-            "notes": "Entry point for all chat messages"
-        },
-        {
-            "parameters": {
-                "operation": "executeQuery",
-                "query": "INSERT INTO sessions (session_id, status, customer_name) VALUES ('{{ $json.sessionId }}', 'ai', '{{ $json.customerName || \"Guest\" }}') ON CONFLICT (session_id) DO UPDATE SET updated_at = NOW() RETURNING *"
-            },
-            "id": "session-upsert-001",
-            "name": "Upsert Session",
-            "type": "n8n-nodes-base.postgres",
-            "typeVersion": 2.5,
-            "position": [
-                -200,
-                0
-            ],
-            "notes": "Creates session if not exists, updates timestamp if exists",
-            "onError": "continueRegularOutput"
-        },
-        {
-            "parameters": {
-                "operation": "executeQuery",
-                "query": "INSERT INTO messages (session_id, sender, content) VALUES ('{{ $json.sessionId }}', 'user', '{{ $json.chatInput.replace(/'/g, \"''\") }}')"
-            },
-            "id": "log-user-msg-001",
-            "name": "Log User Message",
-            "type": "n8n-nodes-base.postgres",
-            "typeVersion": 2.5,
-            "position": [
-                0,
-                0
-            ],
-            "notes": "Logs incoming user message to database",
-            "onError": "continueRegularOutput"
-        },
-        {
-            "parameters": {
-                "operation": "executeQuery",
-                "query": "SELECT status FROM sessions WHERE session_id = '{{ $json.sessionId }}' LIMIT 1"
-            },
-            "id": "check-status-001",
-            "name": "Check Session Status",
-            "type": "n8n-nodes-base.postgres",
-            "typeVersion": 2.5,
-            "position": [
-                200,
-                0
-            ],
-            "notes": "Determines if session is in AI or Human mode"
-        },
-        {
-            "parameters": {
-                "conditions": {
-                    "options": {
-                        "caseSensitive": false
-                    },
-                    "conditions": [
-                        {
-                            "leftValue": "={{ $json.status }}",
-                            "rightValue": "human",
-                            "operator": {
-                                "type": "string",
-                                "operation": "equals"
-                            }
-                        }
-                    ],
-                    "combinator": "and"
-                }
-            },
-            "id": "router-001",
-            "name": "Route by Status",
-            "type": "n8n-nodes-base.if",
-            "typeVersion": 2,
-            "position": [
-                400,
-                0
-            ],
-            "notes": "Routes to Human queue or AI Agent"
-        },
-        {
-            "parameters": {
-                "promptType": "define",
-                "text": "={{ $('Log User Message').first().json.chatInput || $json.chatInput }}",
-                "options": {
-                    "systemMessage": "You are a professional, friendly ecommerce assistant for 'Momo House', a popular Nepali momo restaurant.\n\n## Your Responsibilities:\n1. Help customers with menu items, prices, nutritional info, and recommendations\n2. Assist with order status, delivery times, and location queries\n3. Handle complaints professionally and offer solutions\n4. Collect feedback and suggestions\n\n## Menu Knowledge:\n- Steam Momo (Veg/Chicken/Buff): NPR 150-250\n- Fried Momo (Veg/Chicken/Buff): NPR 180-280\n- Jhol Momo (Veg/Chicken/Buff): NPR 200-300\n- C-Momo (Veg/Chicken/Buff): NPR 220-320\n- Kothey Momo (Veg/Chicken/Buff): NPR 200-300\n\n## Locations:\n- Thamel: Open 10AM-10PM\n- Lalitpur: Open 11AM-9PM\n- Bhaktapur: Open 11AM-8PM\n\n## Important Rules:\n- Be concise but helpful (max 2-3 sentences per response)\n- If asked about topics outside food/restaurant, politely redirect\n- If the customer is frustrated or requests human help, immediately use the 'request_human_agent' tool\n- For complex complaints or refund requests, use 'request_human_agent' tool\n- Always be polite and use a warm, friendly tone\n- End each response with a helpful follow-up question when appropriate",
-                    "maxIterations": 5,
-                    "returnIntermediateSteps": false
-                }
-            },
-            "id": "ai-agent-001",
-            "name": "AI Agent",
-            "type": "@n8n/n8n-nodes-langchain.agent",
-            "typeVersion": 1.7,
-            "position": [
-                600,
-                100
-            ],
-            "notes": "Main AI agent with ecommerce context"
-        },
-        {
-            "parameters": {
-                "model": "gpt-4o-mini",
-                "options": {
-                    "temperature": 0.7,
-                    "maxTokens": 500,
-                    "timeout": 30000
-                }
-            },
-            "id": "openai-model-001",
-            "name": "OpenAI Chat Model",
-            "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
-            "typeVersion": 1.2,
-            "position": [
-                540,
-                300
-            ],
-            "notes": "GPT-4o-mini for cost-effective responses"
-        },
-        {
-            "parameters": {
-                "sessionIdOption": "customKey",
-                "sessionKey": "={{ $('When chat message received').first().json.sessionId }}",
-                "contextWindowLength": 10
-            },
-            "id": "memory-001",
-            "name": "Buffer Memory",
-            "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
-            "typeVersion": 1.3,
-            "position": [
-                760,
-                300
-            ],
-            "notes": "Maintains conversation context (10 messages)"
-        },
-        {
-            "parameters": {
-                "name": "request_human_agent",
-                "description": "Use this tool when: 1) The customer explicitly asks to speak with a human, 2) The customer is frustrated or angry, 3) There's a complex complaint or refund request, 4) You cannot answer the question after 2 attempts. When calling this tool, provide a brief summary of the issue."
-            },
-            "id": "handoff-tool-001",
-            "name": "Human Handoff Tool",
-            "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
-            "typeVersion": 1.2,
-            "position": [
-                600,
-                -100
-            ],
-            "notes": "Tool for AI to request human intervention"
-        },
-        {
-            "parameters": {
-                "operation": "executeQuery",
-                "query": "UPDATE sessions SET status = 'human', summary = '{{ $json.summary || \"Customer requested human assistance\" }}' WHERE session_id = '{{ $('When chat message received').first().json.sessionId }}'"
-            },
-            "id": "mark-human-001",
-            "name": "Mark as Human Mode",
-            "type": "n8n-nodes-base.postgres",
-            "typeVersion": 2.5,
-            "position": [
-                800,
-                -100
-            ],
-            "notes": "Updates session status to human",
-            "onError": "continueRegularOutput"
-        },
-        {
-            "parameters": {
-                "respondWith": "text",
-                "responseText": "I understand you'd like to speak with a human agent. I've notified our support team and someone will be with you shortly. Please hold on for a moment."
-            },
-            "id": "handoff-response-001",
-            "name": "Handoff Response",
-            "type": "n8n-nodes-base.respondToWebhook",
-            "typeVersion": 1.1,
-            "position": [
-                1000,
-                -100
-            ],
-            "notes": "Sends confirmation to user about handoff"
-        },
-        {
-            "parameters": {
-                "respondWith": "text",
-                "responseText": "A support agent is reviewing your message. Please wait a moment for their response."
-            },
-            "id": "human-queue-response-001",
-            "name": "Human Queue Response",
-            "type": "n8n-nodes-base.respondToWebhook",
-            "typeVersion": 1.1,
-            "position": [
-                600,
-                -200
-            ],
-            "notes": "Response when session is in human mode"
-        },
-        {
-            "parameters": {
-                "operation": "executeQuery",
-                "query": "INSERT INTO messages (session_id, sender, content) VALUES ('{{ $('When chat message received').first().json.sessionId }}', 'ai', '{{ $json.output.replace(/'/g, \"''\") }}')"
-            },
-            "id": "log-ai-msg-001",
-            "name": "Log AI Response",
-            "type": "n8n-nodes-base.postgres",
-            "typeVersion": 2.5,
-            "position": [
-                800,
-                100
-            ],
-            "notes": "Logs AI response to database",
-            "onError": "continueRegularOutput"
-        },
-        {
-            "parameters": {
-                "content": "={{ $('AI Agent').first().json.output }}",
-                "options": {}
-            },
-            "id": "respond-ai-001",
-            "name": "Respond with AI Output",
-            "type": "n8n-nodes-base.respondToWebhook",
-            "typeVersion": 1.1,
-            "position": [
-                1000,
-                100
-            ],
-            "notes": "Sends AI response back to chat"
-        },
-        {
-            "parameters": {
-                "values": {
-                    "string": [
-                        {
-                            "name": "error",
-                            "value": "We're experiencing technical difficulties. Please try again in a moment."
-                        }
-                    ]
-                },
-                "options": {}
-            },
-            "id": "error-handler-001",
-            "name": "Error Handler",
-            "type": "n8n-nodes-base.set",
-            "typeVersion": 3.4,
-            "position": [
-                800,
-                300
-            ],
-            "notes": "Fallback error message"
-        },
-        {
-            "parameters": {
-                "respondWith": "text",
-                "responseText": "={{ $json.error }}"
-            },
-            "id": "error-response-001",
-            "name": "Error Response",
-            "type": "n8n-nodes-base.respondToWebhook",
-            "typeVersion": 1.1,
-            "position": [
-                1000,
-                300
-            ],
-            "notes": "Sends error message to user"
-        },
-        {
-            "parameters": {
-                "method": "POST",
-                "url": "http://api:3001/api/messages",
-                "sendBody": true,
-                "bodyParameters": {
-                    "parameters": [
-                        {
-                            "name": "sessionId",
-                            "value": "={{ $json.session_id || $('When chat message received').first().json.sessionId }}"
-                        },
-                        {
-                            "name": "sender",
-                            "value": "user"
-                        },
-                        {
-                            "name": "content",
-                            "value": "={{ $('When chat message received').first().json.chatInput }}"
-                        }
-                    ]
-                },
-                "options": {}
-            },
-            "id": "notify-api-user-001",
-            "name": "Notify API (User)",
-            "type": "n8n-nodes-base.httpRequest",
-            "typeVersion": 4.2,
-            "position": [
-                100,
-                -100
-            ],
-            "notes": "Sends real-time notification to dashboard via API"
-        },
-        {
-            "parameters": {
-                "method": "POST",
-                "url": "http://api:3001/api/messages",
-                "sendBody": true,
-                "bodyParameters": {
-                    "parameters": [
-                        {
-                            "name": "sessionId",
-                            "value": "={{ $('When chat message received').first().json.sessionId }}"
-                        },
-                        {
-                            "name": "sender",
-                            "value": "ai"
-                        },
-                        {
-                            "name": "content",
-                            "value": "={{ $json.output || $('AI Agent').first().json.output }}"
-                        }
-                    ]
-                },
-                "options": {}
-            },
-            "id": "notify-api-ai-001",
-            "name": "Notify API (AI)",
-            "type": "n8n-nodes-base.httpRequest",
-            "typeVersion": 4.2,
-            "position": [
-                900,
-                200
-            ],
-            "notes": "Sends real-time notification of AI response to dashboard"
-        }
-    ],
-    "connections": {
-        "When chat message received": {
-            "main": [
-                [
-                    {
-                        "node": "Upsert Session",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Upsert Session": {
-            "main": [
-                [
-                    {
-                        "node": "Log User Message",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Log User Message": {
-            "main": [
-                [
-                    {
-                        "node": "Check Session Status",
-                        "type": "main",
-                        "index": 0
-                    },
-                    {
-                        "node": "Notify API (User)",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Check Session Status": {
-            "main": [
-                [
-                    {
-                        "node": "Route by Status",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Route by Status": {
-            "main": [
-                [
-                    {
-                        "node": "Human Queue Response",
-                        "type": "main",
-                        "index": 0
-                    }
-                ],
-                [
-                    {
-                        "node": "AI Agent",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "OpenAI Chat Model": {
-            "ai_languageModel": [
-                [
-                    {
-                        "node": "AI Agent",
-                        "type": "ai_languageModel",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Buffer Memory": {
-            "ai_memory": [
-                [
-                    {
-                        "node": "AI Agent",
-                        "type": "ai_memory",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Human Handoff Tool": {
-            "ai_tool": [
-                [
-                    {
-                        "node": "AI Agent",
-                        "type": "ai_tool",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "AI Agent": {
-            "main": [
-                [
-                    {
-                        "node": "Log AI Response",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Log AI Response": {
-            "main": [
-                [
-                    {
-                        "node": "Respond with AI Output",
-                        "type": "main",
-                        "index": 0
-                    },
-                    {
-                        "node": "Notify API (AI)",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Mark as Human Mode": {
-            "main": [
-                [
-                    {
-                        "node": "Handoff Response",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "Error Handler": {
-            "main": [
-                [
-                    {
-                        "node": "Error Response",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        }
+  "nodes": [
+    {
+      "parameters": {
+        "public": true,
+        "mode": "webhook",
+        "availableInChat": true,
+        "agentName": "n8n-agent",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -1664,
+        48
+      ],
+      "id": "b8589917-d4f6-4c80-9a7f-595df2ec5790",
+      "name": "When chat message received",
+      "webhookId": "9a0d4265-0c37-43f6-a47a-84f40828e5c1"
     },
-    "settings": {
-        "executionOrder": "v1",
-        "saveManualExecutions": true,
-        "callerPolicy": "workflowsFromSameOwner",
-        "errorWorkflow": ""
-    },
-    "staticData": null,
-    "pinData": {},
-    "versionId": "production-v1.0",
-    "triggerCount": 0,
-    "tags": [
-        {
-            "name": "production",
-            "createdAt": "2026-01-31T10:00:00.000Z",
-            "updatedAt": "2026-01-31T10:00:00.000Z"
-        },
-        {
-            "name": "chatbot",
-            "createdAt": "2026-01-31T10:00:00.000Z",
-            "updatedAt": "2026-01-31T10:00:00.000Z"
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "options": {
+          "systemMessage": "=You are a customer support and sales assistant for Fatafat Sewa (fatafatsewa.com), Sitapaila Road, Kathmandu.\n\n## LANGUAGE\n\nA LANGUAGE tag is injected before every message. Obey it exactly. Do not detect or re-check language yourself.\n\nLANGUAGE: romanized_nepali → write all Nepali in Latin script only.\nLANGUAGE: english → write in English only.\n\nNever use Devanagari script in any response.\nNever use Hindi words. Apply these replacements without exception:\n\nWrong → Correct\naap → tapai\nchahiye → chahiyo\nbilkul → ramro chha\naccha → ramro\ntheek chha → bhayeko chha\nshukriya → dhanyabad\nkarchu → garchu\nkya → k\nisko/yisko → yoko\nbolo/batao → bhannus\n\nAllowed Nepali vocabulary — do not invent words outside this list (only use these vocabs):\n\nPronouns: tapai, tapailai, tapaiko, ma, hami, hajur\nPolite: kripaya, dhanyabad, maaf garnus\nVerbs: garnu, garnu hunchha, sakchhu, saknuhunchha, dinus, hernus, bhannus, lina, herna, rojnushos, pathaune chha, sahayog garna, garnechhu, gardinchhaun\nConfirm: ho, hoina, bhayeko chha, available chha, ramro chha\nQuestions: kasari, kina, kaha, kahile, kun, kati\nStatus: process bhayeko chha, pending chha, completed chha\nTime: aaja, bholi, din\nCommon: samasya, sahayog, budget, stock, delivery, order, product, price, EMI, kista, monthly, variant, model, return, warranty, exchange, refund, accessory\n\nEnglish product and tech words are always acceptable in both languages: phone, laptop, drone, camera, RAM, storage, battery, specs, processor, display, EMI, order, stock, delivery, warranty, accessory, variant etc.\n\n## GREETING RULE\n\nThe CONTEXT_SUMMARY injected before every message tells you the conversation state. Use it to decide:\n- CONTEXT_SUMMARY says \"New conversation. No context yet.\" → Greet once, briefly, then address the request in the same message.\n- Any other CONTEXT_SUMMARY → no greeting. Go straight to the response.\n\nNever say \"Namaste!\" or \"How can I help?\" after the first turn.\nNever greet when the user has already stated what they want, even if it is the first message.\n\n## ONE QUESTION PER TURN\n\nAsk only one question per response. Never two.\n\nIf multiple things are unknown, ask in this priority order:\n1. Budget — if a product search is needed and budget is unknown\n2. Use case — if budget is known but use case is unknown\n3. Variant/model — if product is known but variant is unknown\n\nNever ask for budget or use case again if already given earlier in the conversation. The CONTEXT_SUMMARY will tell you what is known.\n\n## TOOLS — use these, never guess\n\nproduct name, price, stock, variants, specs → search_products only\nEMI bank list and interest rates → get_emi_banks only\nEMI calculation → calculate_emi only\nreturn policy, warranty, delivery, store info → search_faqs only\n\nBefore calling search_products, extract a clean English keyword only:\n- \"20 hajar ma samsung phone chahiyo\" → \"Samsung phone\"\n- \"drones options ma kun kun chha?\" → \"drone\"\n- \"DJI Mini 4k Fly More Combo GL\" → \"DJI Mini 4K Fly More Combo GL\"\n\nIf first search returns irrelevant results → broaden query once.\nIf second search also fails → do not say product doesn't exist. Give escalation contacts and stop.\n\n## PRODUCT DISPLAY\n\n- Show maximum 3 products (with embedded product link to the name) — name + price only, no specs unless asked\n- Never mix main products and accessories in the same list\n- Always end a product list with one question\n- Suggest accessories only after a main product is confirmed, max 2\n\nBudget edge cases:\n- Product within 15% above budget → show it with note: ne: \"budget bhanda ali badi chha tara value ramro chha\" en: \"slightly above budget but better value\"\n- Never show products more than 30% above stated budget without asking\n- No products found in budget → say so, ask if budget is flexible\n\nBudget in words → interpret correctly:\n- \"pandrah hajar\" = Rs 15,000\n- \"bis hajar tirka\" = approximately Rs 20,000\n- \"pandrah bis hajar\" = Rs 15,000–20,000\n\nBrand diversity — general vs specific queries:\n- General query (best, top, ramro, suggest, kun ramro, k k chha, show me options) → 3 products MUST be from 3 different brands. Never show 2+ from same brand or family. Same-brand results → search again with broader keyword before responding.\n- Specific query (product name or model present, or brand + category like \"Samsung fridge\") → same-brand variants are acceptable.\n\nFollow-up questions must match the category being discussed:\n- Phone → camera/gaming/battery | Laptop → use case/processor\n- TV → screen size/resolution | Fridge → door type/capacity\n- Earbuds → wired or wireless/use case | AC → capacity/inverter type\n\nStock:\n- 1–2 units left → ne: \"[product] — X matra chha, chado order garnus\" en: \"Only X left — order soon\"\n- Unknown/0 stock → ne: \"stock ma chha tara exact number dina sakina\" en: \"we do have them in stock but i cannot give you a number. Please contact to know more [contact info]\"\n- case 1 where product has 'price' but 'stock is 0 or unknown': Never consider item is not in stock even when stock is 0 or unknown.\n- case 2 where product 'price is 0' and 'stock is 0 or unknown': product might be 'coming soon' or contact in [contact info].\n\n## EMI\n\nNever offer EMI before a specific product is confirmed.\nIf product has emi_enabled: false → tell user this product is not eligible for EMI and stop.\n\nSTRICT FLOW — follow every step in order. Never skip ahead. Never show any rates or calculations before all required info is collected.\n\nSTEP 1 — Always ask this first, no exceptions:\n\"Do you have a credit card?\"\nDo NOT show bank names, rates, or calculations at this step.\n\nSTEP 2a — User says YES:\nAsk exactly this in one message: \"Which bank issued your card, and what is your credit limit?\"\nDo NOT show rates or calculations yet.\n\nSTEP 3a — Once bank name + credit limit received:\n- Call get_emi_banks with the bank name to validate it\n- If bank not found → tell user it is not a partner bank, name 3–4 supported banks, ask again. Stop here.\n- If found → show only that bank's available tenures and interest rates\n- If product is an iPhone and bank is Nabil → mention: \"If you pay 40% upfront, interest becomes 0%\"\n- Ask: \"Which tenure do you prefer?\" (list the available months)\nDo NOT calculate yet.\n\nSTEP 4a — Once tenure is chosen:\n- Call calculate_emi with: path \"credit_card\", product_price, tenure_months, annual_interest_rate (from get_emi_banks), bank_code, credit_limit, is_iphone\n- Show: approved amount, downpayment required, monthly installment, total payable, total interest\n\nSTEP 2b — User says NO (no credit card):\nShow exactly two options:\nA) Apply for a credit card via partner banks. Documents: Citizenship copy, 2 passport photos, salary certificate / income proof, bank statement (last 3–6 months)\nB) Non-credit card EMI — 40% downpayment, 0% interest. Supported brands only: Samsung (Hulas Finserv), Realme/OPPO/VIVO/OnePlus (Goodwill Finance), Redmi/Xiaomi (MAW)\nAsk: \"Which option — A or B?\"\n\nSTEP 3b — User picks B:\n- Check product brand from search_products result\n- If brand not in supported list → tell user non-CC EMI is not available for this brand, suggest option A. Stop here.\n- If brand supported → ask: \"Which tenure — 6, 9, or 12 months?\"\n\nSTEP 4b — Once tenure chosen:\n- Call calculate_emi with: path \"non_cc\", product_price, tenure_months, annual_interest_rate: 0\n- Show: downpayment amount (40%), monthly installment, total payable, finance partner name\n- Documents: Citizenship copy, 2 passport photos, salary slip / income proof, guarantor citizenship + photo (if required)\n- Approval time: within 30 minutes\n\nHow to apply EMI on website (when user asks):\n1. Visit fatafatsewa.com\n2. Search for the product\n3. Scroll to bottom → click \"Apply EMI\"\n4. Login or signup\n5. Fill EMI form (duration, downpayment)\n6. Upload documents\nTeam will contact within 30 minutes.\n\nGeneral rules:\n- Never calculate EMI manually — always use calculate_emi tool\n- Never call get_emi_banks without a specific bank name from the user\n- Never show a monthly amount before bank + credit limit + tenure are all confirmed\n- If EMI was already fully shown this conversation → go directly to order confirmation\n\n## ESCALATION\n\nREQUIRES_ESCALATION: true is injected by the workflow when intent is order_lookup, after_sales, or escalation. When you see this flag, give contact info and stop. Do not attempt to solve the issue.\n\nAlso escalate yourself when:\n- Product not found after two search attempts\n- User explicitly asks for a human or manager\n\nContacts:\nPhone: 015917074 / 9801807074\nWhatsApp: 9828757575\nWebsite: fatafatsewa.com\n\nAfter giving contacts — do not continue trying to solve the issue in that response or any following response until user starts a new topic.\n\n## SUGGESTIONS\n\nAlways exactly 3. Always in English. Always 3–5 words max. Match to current conversation state — never repeat the same 3 twice.\n\nState → suggestions:\nNew conversation → [\"Browse products\", \"Track my order\", \"Get support\"]\nBudget asked → [\"Share your budget\", \"Browse all\", \"Contact store\"]\nProducts shown → [\"Compare these\", \"Check EMI\", \"See accessories\"]\nEMI credit card asked → [\"Yes, I have one\", \"No credit card\", \"Skip EMI\"]\nEMI bank asked → [\"Share bank name\", \"See partner banks\", \"Skip EMI\"]\nEMI tenure asked → [\"6 months\", \"12 months\", \"18 months\"]\nEMI shown → [\"Order now\", \"Compare models\", \"Visit store\"]\nNon-CC brand not supported → [\"Apply for credit card\", \"See other products\", \"Contact store\"]\nComparison shown → [\"Choose [A]\", \"Choose [B]\", \"Ask use case\"]\nAccessories shown → [\"Add accessory\", \"Skip, order now\", \"Place order\"]\nOut of stock → [\"See similar\", \"Contact store\", \"Set alert\"]\nEscalation → [\"Call store\", \"WhatsApp support\", \"Visit website\"]\n\n## OUTPUT FORMAT\n\nReturn ONLY valid JSON. No text outside JSON. Ever.\n{\"output\": \"<response>\", \"suggestions\": [\"<action 1>\", \"<action 2>\", \"<action 3>\"]}\nNo Devanagari anywhere in output. No Hindi words anywhere in output. No markdown formatting inside the output field.\n"
         }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "0204814e-41de-48be-b968-91231e575245",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -96,
+        416
+      ],
+      "id": "c1d605d8-93a0-4693-ab32-03a06e957779",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "aba2nCRFLnmqP0cA",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get the raw rows from the previous Postgres node\nconst rows = items.map(item => item.json);\n\n// 1. REVERSE ORDER\nrows.reverse();\n\n// 2. CLEAN AND FORMAT THE SCRIPT to prevent context bloat\nconst cleanHistory = rows.reduce((acc, row) => {\n  let roleLabel = 'System'; \n  const sender = (row.sender || '').toLowerCase();\n\n  if (sender === 'user') {\n    roleLabel = 'User';\n  } else if (sender === 'ai') {\n    roleLabel = 'Assistant';\n  } else if (sender === 'admin') {\n    roleLabel = 'Support Agent'; \n  }\n\n  let content = (row.content || '').trim();\n\n  // --- CONTEXT BLOAT CLEANUP FILTERS ---\n\n  // 1. Strip the duplicated System Prompt entirely\n  // (The Agent node already has this, we don't need it in history)\n  if (content.includes(\"## IDENTITY\")) {\n    const splitContent = content.split(/Human:|User:/i);\n    // If the system prompt was bundled with the human message, extract just the human part\n    if (splitContent.length > 1) {\n      content = splitContent[1].trim();\n    } else {\n      // If it's a standalone system message row, skip it completely\n      return acc; \n    }\n  }\n\n  // 2. Strip out lines starting with \"System:\"\n  content = content.replace(/^System:.*(?:\\n|$)/gm, '');\n\n  // 3. Strip out the massive raw JSON Tool outputs \n  // (The AI already took action based on them, no need to remember the raw JSON)\n  content = content.replace(/^Tool:.*(?:\\n|$)/gm, '');\n\n  // 4. Strip out the \"Calling MCP Client...\" logs\n  content = content.replace(/^AI: Calling MCP Client.*(?:\\n|$)/gm, '');\n\n  content = content.trim();\n\n  // If after cleaning there's nothing left, skip this row\n  if (!content) return acc;\n\n  // Add clean message to history\n  acc.push(`${roleLabel}: ${content}`);\n  return acc;\n}, []);\n\n// Join the clean history block\nconst historyBlock = cleanHistory.join(\"\\n\\n\");\n\n// Return the optimized text block\nreturn [{ json: { conversation_history: historyBlock } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -992,
+        48
+      ],
+      "id": "064564b1-db9e-479a-ae25-c96b26ad8933",
+      "name": "conversation_history",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "messages",
+          "mode": "list",
+          "cachedResultName": "messages"
+        },
+        "limit": 10,
+        "where": {
+          "values": [
+            {
+              "column": "session_id",
+              "value": "={{ $('When chat message received').item.json.sessionId }}"
+            }
+          ]
+        },
+        "sort": {
+          "values": [
+            {
+              "column": "created_at",
+              "direction": "DESC"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -1168,
+        48
+      ],
+      "id": "74a7b660-af5e-434b-b73e-0bbe1a712565",
+      "name": "fetch_messages",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "J5bjOHDGVG5Yvdp4",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "endpointUrl": "https://profiles-athens-stability-warning.trycloudflare.com/mcp",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [
+        176,
+        368
+      ],
+      "id": "7ee2f597-f0b4-486a-9526-c1b9845b6a5c",
+      "name": "MCP Client"
+    },
+    {
+      "parameters": {
+        "model": "gemma3:27b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        -1456,
+        320
+      ],
+      "id": "d5e25ca0-acf1-447e-a05c-641059a2c400",
+      "name": "Ollama Chat Model1",
+      "credentials": {
+        "ollamaApi": {
+          "id": "2kpKVV839hO6BhKU",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"LANGUAGE\": \"romanized_nepali\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -1312,
+        288
+      ],
+      "id": "8581a2de-2185-4d85-9bce-61a2331dacd0",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1rtsn2wURdsCl2hoLCwR0bpADSoTWPY390y6DkeKGav0",
+          "mode": "list",
+          "cachedResultName": "fewshots",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1rtsn2wURdsCl2hoLCwR0bpADSoTWPY390y6DkeKGav0/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 622797992,
+          "mode": "list",
+          "cachedResultName": "fewshots.csv",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1rtsn2wURdsCl2hoLCwR0bpADSoTWPY390y6DkeKGav0/edit#gid=622797992"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "intent",
+              "lookupValue": "={{ $json.output.INTENT }}"
+            },
+            {
+              "lookupColumn": "language",
+              "lookupValue": "={{ $('language_classifier').item.json.output.LANGUAGE }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -448,
+        48
+      ],
+      "id": "fe283901-8632-4cb8-93a8-50c3deec6670",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "eMiHv0HdakfQa86E",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        -800,
+        416
+      ],
+      "id": "8ddb1cff-2565-43ab-9c26-74f27c564a35",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "aba2nCRFLnmqP0cA",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"INTENT\": \"product_discovery\",\n  \"CONTEXT_SUMMARY\": \"New conversation. No context yet.\",\n  \"REQUIRES_ESCALATION\": false\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        -656,
+        384
+      ],
+      "id": "3f4374a0-ee3c-4aa6-a5ae-be6f63cef823",
+      "name": "Structured Output Parser1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── 1. RAW INPUTS ────────────────────────────────────────────────\nlet language             = $('language_classifier').item.json.output.LANGUAGE;\nconst intent             = $('intent_classifier').item.json.output.INTENT;\nconst context            = $('intent_classifier').item.json.output.CONTEXT_SUMMARY;\nconst requiresEscalation = $('intent_classifier').item.json.output.REQUIRES_ESCALATION;\nconst history            = $('conversation_history').item.json.conversation_history || '';\nconst userMessage        = $('When chat message received').item.json.chatInput || '';\nconst fewShotRows        = $('Get row(s) in sheet').all();\n\n// ── 2. SHORT-REPLY LANGUAGE CORRECTION ───────────────────────────\n// Problem: \"daily use\", \"ok\", \"gaming\" etc. are pure English words\n// but are continuation replies in a Nepali conversation.\n// The classifier sees them in isolation and returns \"english\".\n// Fix: if message is ≤3 words and history contains Nepali markers,\n// override language back to romanized_nepali.\n\nconst wordCount  = userMessage.trim().split(/\\s+/).length;\nconst isShortReply = wordCount <= 3;\n\nif (language === 'english' && isShortReply && history) {\n  const nepaliMarkers = [\n    'chha', 'garnu', 'tapai', 'hunchha', 'chahanchhu',\n    'milchha', 'dinus', 'hernus', 'garnechhu', 'gardinchhaun',\n    'chahanuhunchha', 'sakchhu', 'bhayeko', 'aaucha', 'lagyo',\n    'bhannus', 'kripaya', 'dhanyabad', 'samasya', 'sahayog'\n  ];\n  const historyLower   = history.toLowerCase();\n  const historyIsNepali = nepaliMarkers.some(w => historyLower.includes(w));\n  if (historyIsNepali) {\n    language = 'romanized_nepali';\n  }\n}\n\n// ── 3. FEW-SHOT EXAMPLES ─────────────────────────────────────────\nconst examples = fewShotRows\n  .map(r => `User: ${r.json.user_input}\\nAssistant: ${r.json.expected_output}`)\n  .join('\\n\\n');\n\n// ── 4. ESCALATION NOTE ───────────────────────────────────────────\nconst escalationNote = requiresEscalation\n  ? '\\nNOTE: REQUIRES_ESCALATION is true. Provide contact info and stop. Do not attempt to solve.\\n'\n  : '';\n\n// ── 5. ASSEMBLE PROMPT ───────────────────────────────────────────\nconst prompt = [\n  `LANGUAGE: ${language}`,\n  `INTENT: ${intent}`,\n  escalationNote,\n  `SALES CONTEXT:\\n${context}`,\n  `\\nEXAMPLES — respond exactly like these but never repeat:\\n${examples}`,\n  `\\nCONVERSATION HISTORY:\\n${history || 'No previous messages.'}`,\n  `\\nUSER QUERY: ${userMessage}`\n].join('\\n');\n\nreturn [{ json: { prompt } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        48
+      ],
+      "id": "69ef5938-0544-49b7-b255-366d9c82a257",
+      "name": "final_response_formater"
+    },
+    {
+      "parameters": {
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are a text classifier.\n\nTask: Determine whether the user's input is:\n1. \"romanized_nepali\" → Nepali written in Latin script (e.g., \"k cha\", \"ma ghar janchu\", or mixed Nepali + English like \"ma office janchu today\")\n2. \"english\" → Pure English with no Nepali words\n\nRules:\n- If any Nepali words (romanized) are present, classify as \"romanized_nepali\"\n- If the sentence is fully in English, classify as \"english\"\n- Do not consider Devanagari script; assume all input is Latin script; all Devanagari falls under romanized_nepali\n- Be strict: even a single Nepali word → \"romanized_nepali\"\n\nOutput:\nReturn ONLY valid JSON.\nNo markdown, no code blocks, no explanations.\n\nFormat:\n{\"LANGUAGE\":\"romanized_nepali\"}\nor\n{\"LANGUAGE\":\"english\"}"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -1456,
+        48
+      ],
+      "id": "c973b4e7-50bf-4b86-a294-09f6aee18eee",
+      "name": "language_classifier"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('When chat message received').item.json.chatInput }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=You are a sales conversation analyst for Fatafat Sewa, an electronics  ecommerce store in Kathmandu, Nepal.  You receive a conversation history and the latest user message. Your job is to output two things: INTENT and CONTEXT_SUMMARY.  ---  ## AVAILABLE TOOLS THE MAIN AGENT HAS  The main agent (not you) has access to these three tools. Use this  knowledge to inform your classification — specifically to judge whether  the conversation needs product data, EMI data, or policy data, or  whether none of these tools can help and escalation is required.  search_products   Searches the product catalog by keyword.   Can return: product name, price, stock status, variants, specs.   Cannot do: check order status, process returns, handle payments.   Used for intents: product_discovery, product_detail,                      product_comparison, quick_fact  get_emi_info   Returns EMI plans for a specific product.   Can return: duration options, monthly amount, down payment,                interest rate, total payable.   Cannot do: apply for EMI, confirm orders, check eligibility.   Used for intents: emi_purchase  search_faqs   Searches store policies and general information.   Can return: return policy, warranty terms, delivery charges,                store hours, exchange policy, contact info.   Cannot do: look up specific orders, process refunds,               create tickets.   Used for intents: policy_store_info, after_sales (policy only)  NO TOOL AVAILABLE for: order_lookup, actual return/refund processing,   warranty claims requiring action, payment issues.   These must be escalated to the human team.  ---  ## INTENT DEFINITIONS  Classify the current user message into exactly one of these intents. When in doubt, choose the intent that best describes what the user  needs RIGHT NOW in this turn, not what they needed earlier.  product_discovery   User is exploring options without a specific product in mind.   Signals: category browsing, budget-first queries, use-case queries.   Examples: \"laptop herna chahanchhu\", \"20 hajar ma k paucha?\",              \"travel drone suggest garnus\", \"gaming phone k ramro chha?\"   Tool needed: search_products  product_detail   User wants information about one specific product they already named.   Signals: product name mentioned, asking about specs, features,             colors, variants of that specific product.   Examples: \"iPhone 15 ko details\", \"Samsung A55 ko camera k k chha?\",             \"DJI Mini 4K ko weight kati chha?\"   Tool needed: search_products  product_comparison   User wants to compare two or more specific products, or is asking    which is better among options already shown in the conversation.   Signals: \"vs\", \"difference\", \"kun ramro\", \"which is better\",            two product names in the same message.   Examples: \"Samsung ra iPhone ma kun linu?\", \"kun ramro chha in two?\",             \"A35 vs Note 13 difference k ho?\"   Tool needed: search_products  quick_fact   User needs one specific fact about a product — just the price or    just the stock status. Not a full product search.   Signals: \"kati parcha?\", \"available chha?\", \"stock ma chha?\",            \"price k ho?\" — when a product is already known from context.   Examples: \"yo kati parcha?\", \"stock chha?\", \"Samsung A35 available chha?\"   Tool needed: search_products  emi_purchase   User is asking about EMI, monthly payments, down payment, financing,   or is ready to place an order. Also covers accessory questions once    a main product is confirmed.   Signals: \"EMI\", \"kista\", \"monthly\", \"down payment\", \"order garnu chha\",            \"kaise kinu\", \"accessories k k linu parcha?\"   Examples: \"EMI ma lina milchha?\", \"monthly kati parcha?\",             \"order garnu chha\", \"yo sanga k k linu parcha?\"   Tools needed: get_emi_info, search_products (for accessories)  policy_store_info   User is asking about store policies or store information.   Signals: return, warranty duration, exchange policy, delivery charge,            store location, opening hours, contact number.   Examples: \"return policy k chha?\", \"warranty kati barsha?\",             \"delivery charge kati?\", \"shop kaha chha?\", \"timings k ho?\"   Tool needed: search_faqs  after_sales   User has already purchased and has a problem or question about    their specific order or product. Distinct from policy_store_info    because this involves a specific transaction, not general policy.   Signals: mentions of a specific order, delivery not arrived,             wrong item, damaged product, want to return a specific item,            warranty claim on something they own.   Examples: \"mero order aayena\", \"galat product aayo\",              \"product kharab bhayo warranty claim garnu chha\",             \"return garnu chha mero phone\"   Tool needed: search_faqs (policy only) — but escalation required                 for any actual action   NOTE: Always mark requires_escalation as true for this intent.  order_lookup   User wants to know the status or details of a specific order.   Signals: \"order kaha chha?\", \"delivery kahile aaucha?\",             order ID mentioned, tracking question.   Examples: \"mero order status k chha?\", \"order #1234 kaha pugyo?\",             \"kahile deliver hunchha?\"   Tool needed: NONE — escalate immediately   NOTE: Always mark requires_escalation as true for this intent.  escalation   User is expressing frustration, anger, or explicitly asking to    speak with a human or manager. Also use this when a previous    escalation_handoff response was already given and the user    is still unsatisfied.   Signals: \"useless\", \"bekaar\", \"manager\", \"human sanga baat\",            \"agent chahiyo\", repeated complaints, ALL CAPS messages,            aggressive tone.   Examples: \"yesto bekaar service\", \"manager lai dinus\",             \"koi real person sanga baat garnu chha\"   Tool needed: NONE — escalate immediately   NOTE: Always mark requires_escalation as true for this intent.  clarification_needed   User message is too vague, too short, or completely off-topic    to classify into any other intent. Use this as a last resort only.   Signals: single words, pure greetings with no request,             completely unclear messages.   Examples: \"help\", \"hello\", \"k ho?\", \"hmmm\", \"ok\"   Tool needed: NONE — ask one clarifying question  ---  ## CONTEXT_SUMMARY RULES  Write 2 to 5 plain English sentences describing the current sales  situation. This summary is read by the main agent as a handover note.  Always include (if known from history): - What the user is looking for or has been looking at - Any budget or price range mentioned - Products that have already been shown or discussed - Whether EMI has been discussed - What is still unresolved or what the user asked last - Any frustration signals or special circumstances  Do NOT include: - Your reasoning about intent classification - Greetings or filler - Bullet points — write in sentences only - Information not present in the history  If the conversation just started (no history or only a greeting): Write exactly: \"New conversation. No context yet.\"  If the intent is order_lookup, after_sales, or escalation: Include any order ID or product name the user mentioned, and note  the emotional tone if relevant.  ---  ## OUTPUT FORMAT  Return ONLY valid JSON. No markdown. No code blocks. No explanation. No text before or after the JSON object.  {   \"INTENT\": \"<one of the 9 intent names above>\",   \"CONTEXT_SUMMARY\": \"<2 to 5 plain English sentences>\",   \"REQUIRES_ESCALATION\": <true or false> }  REQUIRES_ESCALATION must be true when intent is: after_sales, order_lookup, or escalation. For all other intents set it to false.  ---  ## EXAMPLES  Input: HISTORY: (none) USER: laptop herna chahanchhu  Output: {\"INTENT\":\"product_discovery\",\"CONTEXT_SUMMARY\":\"New conversation. No context yet.\",\"REQUIRES_ESCALATION\":false}  ---  Input: HISTORY: User: phone herna chahanchhu Assistant: Budget kati chha tapako? User: 20 hajar tirka Assistant: Samsung A35, Redmi Note 13, Realme 12 shown. USER: Samsung ra Redmi ma kun linu?  Output: {\"INTENT\":\"product_comparison\",\"CONTEXT_SUMMARY\":\"User is looking for a phone with a budget around Rs 20,000. Three options were shown: Samsung A35, Redmi Note 13, and Realme 12. User is now comparing Samsung A35 and Redmi Note 13 and wants a recommendation. EMI not yet discussed.\",\"REQUIRES_ESCALATION\":false}  ---  Input: HISTORY: User: Samsung A35 lina man chha Assistant: Ramro chha, EMI options: 3 months Rs 6,999, 6 months Rs 3,666. USER: mero order aayena aba  Output: {\"INTENT\":\"order_lookup\",\"CONTEXT_SUMMARY\":\"User was interested in purchasing Samsung A35 and had seen EMI options. They are now reporting that a previous order has not arrived. No order ID has been provided yet. Tone appears frustrated.\",\"REQUIRES_ESCALATION\":true}  ---  Input: HISTORY: User: laptop suggest garnus Assistant: Budget kati chha? USER: yesto bekaar service, koi helpful chaina  Output: {\"INTENT\":\"escalation\",\"CONTEXT_SUMMARY\":\"User asked for a laptop suggestion but expressed frustration before receiving product options. User is now escalating and expressing dissatisfaction with the service. No product or budget was confirmed.\",\"REQUIRES_ESCALATION\":true}  ---  Now classify the following:  HISTORY: {{ $json.conversation_history }}  USER: {{ $('When chat message received').item.json.chatInput }}"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -784,
+        48
+      ],
+      "id": "190a3e39-efa9-4a75-840a-8ca864566189",
+      "name": "intent_classifier"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('When chat message received').item.json.sessionId }}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        80,
+        224
+      ],
+      "id": "263678ef-bcba-42b8-bb5e-45700ef5d785",
+      "name": "Simple Memory"
+    }
+  ],
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "language_classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "conversation_history": {
+      "main": [
+        [
+          {
+            "node": "intent_classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "fetch_messages": {
+      "main": [
+        [
+          {
+            "node": "conversation_history",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Client": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "language_classifier",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "language_classifier",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "final_response_formater",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "intent_classifier",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser1": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "intent_classifier",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "final_response_formater": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "language_classifier": {
+      "main": [
+        [
+          {
+            "node": "fetch_messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "intent_classifier": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        []
+      ]
+    }
+  },
+  "pinData": {
+    "When chat message received": [
+      {
+        "action": "sendMessage",
+        "sessionId": "sess_ddvrzsc7b",
+        "chatInput": "hi"
+      }
     ]
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e4aa6cc1728bad580660c504d9a06515cf6581262982f799b584ea26c2d3490f"
+  }
 }
