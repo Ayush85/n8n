@@ -46,7 +46,7 @@
     let alertAudioCtx = null;
     let pendingUserDeliveryQueue = [];
     const userMessageStatusEls = new Map();
-    let unreadCount = 0;
+    let unreadCount = parseInt(localStorage.getItem('n8n_chat_unread') || '0', 10);
     let pushRegistration = null;
     let cachedPushPublicKey = null;
 
@@ -55,6 +55,7 @@
         localStorage.removeItem('n8n_chat_session_id');
         localStorage.removeItem('n8n_chat_mode');
         localStorage.removeItem('n8n_chat_user_info');
+        localStorage.removeItem('n8n_chat_unread');
         console.log('✅ Chat session reset! Refresh the page.');
         location.reload();
     };
@@ -1789,8 +1790,10 @@
         if (unreadCount > 0) {
             badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
             badge.classList.remove('hidden');
+            localStorage.setItem('n8n_chat_unread', String(unreadCount));
         } else {
             badge.classList.add('hidden');
+            localStorage.removeItem('n8n_chat_unread');
         }
     }
 
@@ -2180,6 +2183,9 @@
             showChatInterface(); // makes tab bar visible, shows chat panel
         }
     });
+
+    // Restore unread badge from localStorage immediately on load
+    updateUnreadBadge();
 
     // Initialize mode display with localStorage value (will be overridden by server)
     // This just prevents a blank badge before the server responds

@@ -604,7 +604,11 @@ app.post('/api/chat', async (req, res, next) => {
             });
         }
 
-        // Forward request to n8n webhook
+        // Track if the client tab closes while waiting for n8n
+        const userContact = metadata?.user_contact || null;
+        let clientDisconnected = false;
+        const onClientClose = () => { clientDisconnected = true; };
+        req.on('close', onClientClose);
 
         // Forward request to n8n webhook
         const response = await fetch(N8N_WEBHOOK_URL, {
@@ -619,9 +623,14 @@ app.post('/api/chat', async (req, res, next) => {
             })
         });
 
+        req.removeListener('close', onClientClose);
+
         if (!response.ok) {
             logger.error(`N8N webhook error: ${response.status} ${response.statusText}`);
-            return res.status(502).json({ error: 'AI service unavailable', status: response.status });
+            if (!clientDisconnected) {
+                return res.status(502).json({ error: 'AI service unavailable', status: response.status });
+            }
+            return;
         }
 
         const responseText = await response.text();
@@ -668,8 +677,31 @@ app.post('/api/chat', async (req, res, next) => {
 
         logger.info(`Parsed message from n8n:`, actualMessage);
 
-        // Return in a consistent format
-        res.json({ output: actualMessage, suggestions });
+        // Always persist the AI response so it survives a closed tab
+        if (sessionId && actualMessage) {
+            await pool.query(
+                'INSERT INTO messages (session_id, sender, content) VALUES ($1, $2, $3)',
+                [sessionId, 'ai', actualMessage]
+            );
+        }
+
+        if (clientDisconnected) {
+            // Tab was closed while waiting — send a push notification so they know a reply is ready
+            if (userContact && actualMessage) {
+                const pushBody = actualMessage.replace(/<[^>]+>/g, '').trim().slice(0, 120);
+                await sendWebPushNotifications({
+                    title: 'New reply — Support',
+                    body: pushBody || 'You have a new reply. Tap to view.',
+                    url: getPublicAppUrl(),
+                    role: 'user',
+                    userContact,
+                }).catch(err => logger.warn('Push after tab-close failed:', err.message));
+            }
+            return; // Response socket is gone, nothing more to do
+        }
+
+        // Return in a consistent format; saved:true tells the widget to skip its own DB save
+        res.json({ output: actualMessage, suggestions, saved: true });
     } catch (error) {
         logger.error('Error proxying to n8n:', error);
         next(error);
