@@ -34,11 +34,15 @@ self.addEventListener('notificationclick', (event) => {
 
         for (const client of allClients) {
             if (client.url.includes(self.location.origin) && 'focus' in client) {
-                await client.focus();
-                if ('navigate' in client) {
-                    await client.navigate(targetUrl);
+                try {
+                    await client.focus();
+                    if ('navigate' in client) {
+                        await client.navigate(targetUrl);
+                    }
+                    return;
+                } catch (_) {
+                    // Tab was closed between matchAll and focus/navigate — fall through to openWindow
                 }
-                return;
             }
         }
 
