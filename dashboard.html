@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OmniDesk — Omnichannel Support</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; width: 100%; overflow: hidden; }
+body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── Tweak defaults ──────────────────────────────────────────────────────────
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "darkMode": false,
+  "accentColor": "#5b5ef4",
+  "fontSize": 13
+}/*EDITMODE-END*/;
+
+// ── Theme ───────────────────────────────────────────────────────────────────
+function getTheme(dark, accent) {
+  return dark ? {
+    bg: '#0f1117',
+    bgPanel: '#161b27',
+    bgSidebar: '#0f1117',
+    bgHover: 'rgba(255,255,255,0.05)',
+    bgActive: 'rgba(91,94,244,0.14)',
+    bgInput: '#1e2230',
+    bgBubbleCustomer: '#1e2230',
+    bgBubbleAgent: accent + '22',
+    bgBubbleAI: 'rgba(139,92,246,0.15)',
+    border: 'rgba(255,255,255,0.07)',
+    borderLight: 'rgba(255,255,255,0.04)',
+    text: '#e2e8f0',
+    textMuted: '#64748b',
+    textDim: '#94a3b8',
+    textLight: '#cbd5e1',
+    pillBg: 'rgba(255,255,255,0.06)',
+    shadow: '0 1px 3px rgba(0,0,0,0.4)',
+    shadowCard: '0 4px 16px rgba(0,0,0,0.3)',
+    navBg: '#0a0d14',
+    navIcon: '#475569',
+    navIconActive: '#fff',
+    scrollbar: '#2a3045',
+    accent,
+    accentText: '#fff',
+    accentLight: accent + '22',
+    accentBorder: accent + '44',
+  } : {
+    bg: '#f4f6fa',
+    bgPanel: '#ffffff',
+    bgSidebar: '#ffffff',
+    bgHover: 'rgba(0,0,0,0.03)',
+    bgActive: accent + '12',
+    bgInput: '#f8f9fc',
+    bgBubbleCustomer: '#ffffff',
+    bgBubbleAgent: accent + '18',
+    bgBubbleAI: 'rgba(139,92,246,0.08)',
+    border: 'rgba(0,0,0,0.07)',
+    borderLight: 'rgba(0,0,0,0.04)',
+    text: '#1a1d2e',
+    textMuted: '#94a3b8',
+    textDim: '#64748b',
+    textLight: '#475569',
+    pillBg: '#f1f3f9',
+    shadow: '0 1px 3px rgba(0,0,0,0.08)',
+    shadowCard: '0 4px 16px rgba(0,0,0,0.08)',
+    navBg: '#1a1d2e',
+    navIcon: '#94a3b8',
+    navIconActive: '#ffffff',
+    scrollbar: '#e2e8f0',
+    accent,
+    accentText: '#fff',
+    accentLight: accent + '15',
+    accentBorder: accent + '35',
+  };
+}
+
+// ── Channel config ──────────────────────────────────────────────────────────
+const CHANNELS = {
+  whatsapp:  { label: 'WhatsApp',  color: '#25D366', bg: '#e8faf0' },
+  instagram: { label: 'Instagram', color: '#E1306C', bg: '#fde8f0' },
+  facebook:  { label: 'Messenger', color: '#0084FF', bg: '#e6f3ff' },
+  livechat:  { label: 'Live Chat', color: '#00BCD4', bg: '#e5f9fb' },
+};
+
+// ── Data ────────────────────────────────────────────────────────────────────
+const CONVERSATIONS = [
+  {
+    id: 1, channel: 'whatsapp', name: 'Sofia Martínez', handle: '+52 55 1234 5678',
+    avatar: 'SM', avatarColor: '#f97316', unread: 3,
+    tags: ['Lead', 'Hot'], status: 'urgent', lastTime: '2m ago',
+    lastMsg: "I still haven't received the pricing info you promised.",
+    assignedTo: 'Alex R.',
+    messages: [
+      { id: 1, from: 'customer', text: "Hi! I saw your offer on the website and I'm interested in the Pro plan.", time: '10:12 AM' },
+      { id: 2, from: 'ai', text: "Hello Sofia! Thanks for reaching out 👋 I'd be happy to help with info about our Pro plan. Could you tell me a bit about your use case?", time: '10:12 AM' },
+      { id: 3, from: 'customer', text: 'We have a small team of 8 people doing customer support. We want to unify our channels.', time: '10:14 AM' },
+      { id: 4, from: 'agent', text: "Great news — our Pro plan supports up to 15 seats and includes WhatsApp, Instagram, Facebook, and live chat. I can set up a demo call for you this week.", time: '10:15 AM', agentName: 'Alex R.' },
+      { id: 5, from: 'customer', text: 'That sounds perfect. What about pricing?', time: '10:17 AM' },
+      { id: 6, from: 'ai', text: "Our Pro plan starts at $149/mo for up to 10 seats. For 8 agents, that's the perfect fit. Would you like me to send a full pricing breakdown?", time: '10:17 AM' },
+      { id: 7, from: 'customer', text: "I still haven't received the pricing info you promised.", time: '10:22 AM' },
+    ],
+    notes: 'Interested in Pro. Decision maker. Call scheduled for Thursday.',
+  },
+  {
+    id: 2, channel: 'instagram', name: 'Lucas Ferreira', handle: '@lucasdesigns',
+    avatar: 'LF', avatarColor: '#8b5cf6', unread: 1,
+    tags: ['Support'], status: 'open', lastTime: '8m ago',
+    lastMsg: "My order hasn't arrived and it's been 2 weeks",
+    assignedTo: 'Unassigned',
+    messages: [
+      { id: 1, from: 'customer', text: "Hey, my order hasn't arrived and it's been 2 weeks already.", time: '9:55 AM' },
+      { id: 2, from: 'ai', text: "Hi Lucas! I'm sorry to hear that. Could you share your order number so I can look into this right away?", time: '9:55 AM' },
+      { id: 3, from: 'customer', text: 'Order #ORD-8821', time: '9:56 AM' },
+      { id: 4, from: 'ai', text: "Thanks! I found order #ORD-8821. There was a delay at the fulfillment center. Your package is now in transit and should arrive within 2–3 business days. You will receive a tracking email shortly.", time: '9:57 AM' },
+      { id: 5, from: 'customer', text: "My order hasn't arrived and it's been 2 weeks", time: '10:03 AM' },
+    ],
+    notes: '',
+  },
+  {
+    id: 3, channel: 'facebook', name: 'Marie Dubois', handle: 'marie.dubois.fr',
+    avatar: 'MD', avatarColor: '#0ea5e9', unread: 0,
+    tags: ['Support', 'Urgent'], status: 'pending', lastTime: '15m ago',
+    lastMsg: 'Can I upgrade my plan mid-cycle?',
+    assignedTo: 'Sarah K.',
+    messages: [
+      { id: 1, from: 'customer', text: 'Hello, can I upgrade my subscription plan mid-cycle?', time: '9:45 AM' },
+      { id: 2, from: 'agent', text: "Hi Marie! Yes, absolutely. You can upgrade at any time and we'll prorate the difference. Which plan are you looking to move to?", time: '9:47 AM', agentName: 'Sarah K.' },
+      { id: 3, from: 'customer', text: "I'm on Starter, want to go to Pro. Does the billing reset?", time: '9:50 AM' },
+      { id: 4, from: 'ai', text: "Great question! Your billing cycle stays the same — we just charge the prorated difference for remaining days. If you have 15 days left, you'd only pay half the upgrade cost today.", time: '9:51 AM' },
+      { id: 5, from: 'customer', text: 'Can I upgrade my plan mid-cycle?', time: '9:52 AM' },
+    ],
+    notes: 'Existing Starter customer. Wants to upgrade.',
+  },
+  {
+    id: 4, channel: 'livechat', name: 'Kenji Tanaka', handle: 'kenji@acme.co',
+    avatar: 'KT', avatarColor: '#10b981', unread: 0,
+    tags: ['Lead'], status: 'resolved', lastTime: '1h ago',
+    lastMsg: "Thanks, I'll check the docs and get back to you",
+    assignedTo: 'Alex R.',
+    messages: [
+      { id: 1, from: 'customer', text: 'Does your API support webhooks for real-time events?', time: '8:30 AM' },
+      { id: 2, from: 'ai', text: "Yes! Our API supports webhooks for all major events: new message, conversation assigned, status change, and more. Configure them in Settings → Integrations → Webhooks.", time: '8:30 AM' },
+      { id: 3, from: 'customer', text: 'Can we filter by channel?', time: '8:32 AM' },
+      { id: 4, from: 'agent', text: "Absolutely — each webhook can be scoped to specific channels or conversation types. I'll drop a link to our API docs with examples.", time: '8:33 AM', agentName: 'Alex R.' },
+      { id: 5, from: 'customer', text: "Thanks, I'll check the docs and get back to you", time: '8:40 AM' },
+    ],
+    notes: 'Developer at Acme. Evaluating for enterprise.',
+  },
+  {
+    id: 5, channel: 'whatsapp', name: 'Priya Sharma', handle: '+91 98765 43210',
+    avatar: 'PS', avatarColor: '#f43f5e', unread: 2,
+    tags: ['Support'], status: 'open', lastTime: '22m ago',
+    lastMsg: 'The invoice I received has wrong billing info',
+    assignedTo: 'Unassigned',
+    messages: [
+      { id: 1, from: 'customer', text: 'Hello, the invoice I received has wrong billing info — my company name is misspelled.', time: '9:38 AM' },
+      { id: 2, from: 'ai', text: "Hi Priya! I'm sorry for the inconvenience. I can get that corrected right away. Could you confirm the correct company name for us?", time: '9:38 AM' },
+      { id: 3, from: 'customer', text: '"Sharma & Associates" not "Sharma Associates"', time: '9:40 AM' },
+      { id: 4, from: 'customer', text: 'The invoice I received has wrong billing info', time: '9:42 AM' },
+    ],
+    notes: 'Billing correction needed.',
+  },
+  {
+    id: 6, channel: 'instagram', name: 'Carlos Vega', handle: '@carlosvega_mx',
+    avatar: 'CV', avatarColor: '#6366f1', unread: 0,
+    tags: ['Lead', 'Demo'], status: 'open', lastTime: '35m ago',
+    lastMsg: 'When can we schedule the product demo?',
+    assignedTo: 'Sarah K.',
+    messages: [
+      { id: 1, from: 'customer', text: "Hi! A colleague recommended your platform. We're looking for a support solution for our e-commerce store.", time: '9:15 AM' },
+      { id: 2, from: 'ai', text: "Hi Carlos! Great to hear from you 🙌 We'd love to show you how OmniDesk can help your e-commerce team. Are you managing support across multiple channels currently?", time: '9:15 AM' },
+      { id: 3, from: 'customer', text: 'Yes, we use WhatsApp and Instagram mainly. When can we schedule the product demo?', time: '9:25 AM' },
+    ],
+    notes: 'E-commerce referral. Interested in demo.',
+  },
+];
+
+const STATUS_META = {
+  urgent:   { label: 'Urgent',   bg: '#fef2f2', color: '#ef4444', border: '#fecaca', darkBg: 'rgba(239,68,68,0.15)', darkColor: '#f87171', darkBorder: 'rgba(239,68,68,0.3)' },
+  open:     { label: 'Open',     bg: '#eff6ff', color: '#3b82f6', border: '#bfdbfe', darkBg: 'rgba(59,130,246,0.15)', darkColor: '#60a5fa', darkBorder: 'rgba(59,130,246,0.3)' },
+  pending:  { label: 'Pending',  bg: '#fffbeb', color: '#f59e0b', border: '#fde68a', darkBg: 'rgba(245,158,11,0.15)', darkColor: '#fbbf24', darkBorder: 'rgba(245,158,11,0.3)' },
+  resolved: { label: 'Resolved', bg: '#f0fdf4', color: '#22c55e', border: '#bbf7d0', darkBg: 'rgba(34,197,94,0.15)', darkColor: '#4ade80', darkBorder: 'rgba(34,197,94,0.3)' },
+};
+
+const TAG_META = {
+  Lead:    { bg: '#f3f0ff', color: '#7c3aed', darkBg: 'rgba(124,58,237,0.15)', darkColor: '#a78bfa' },
+  Support: { bg: '#eff6ff', color: '#2563eb', darkBg: 'rgba(37,99,235,0.15)', darkColor: '#60a5fa' },
+  Urgent:  { bg: '#fef2f2', color: '#dc2626', darkBg: 'rgba(220,38,38,0.15)', darkColor: '#f87171' },
+  Hot:     { bg: '#fff7ed', color: '#ea580c', darkBg: 'rgba(234,88,12,0.15)', darkColor: '#fb923c' },
+  Demo:    { bg: '#ecfdf5', color: '#059669', darkBg: 'rgba(5,150,105,0.15)', darkColor: '#34d399' },
+};
+
+// ── Icons ────────────────────────────────────────────────────────────────────
+const icons = {
+  inbox: (c) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round"><path d="M22 12h-6l-2 3H10l-2-3H2"/><path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg>,
+  contacts: (c) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>,
+  reports: (c) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+  settings: (c) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>,
+  search: (c) => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+  send: (c) => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
+  sparkle: (c,s=13) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round"><path d="M12 2l2.4 7.4L22 12l-7.6 2.6L12 22l-2.4-7.4L2 12l7.6-2.6z"/></svg>,
+  bot: (c) => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M9 8V6a3 3 0 016 0v2"/><circle cx="9" cy="14" r="1" fill={c}/><circle cx="15" cy="14" r="1" fill={c}/></svg>,
+  attach: (c) => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>,
+  emoji: (c) => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>,
+  mention: (c) => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 006 0v-1a10 10 0 10-3.92 7.94"/></svg>,
+  filter: (c) => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>,
+  check: (c) => <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>,
+  chevron: (c) => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>,
+  tag: (c) => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>,
+  note: (c) => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+  dashboard: (c) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
+  tags: (c) => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.8" strokeLinecap="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>,
+};
+
+function WaIcon() { return <svg width="12" height="12" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347"/></svg>; }
+function IgIcon() { return <svg width="12" height="12" viewBox="0 0 24 24"><defs><linearGradient id="ig2" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stopColor="#f09433"/><stop offset="50%" stopColor="#dc2743"/><stop offset="100%" stopColor="#bc1888"/></linearGradient></defs><path fill="url(#ig2)" d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0 5.838c-2.209 0-4 1.79-4 4s1.791 4 4 4 4-1.791 4-4-1.791-4-4-4zm0 6.5c-1.381 0-2.5-1.119-2.5-2.5s1.119-2.5 2.5-2.5 2.5 1.119 2.5 2.5-1.119 2.5-2.5 2.5zm4.965-6.403c0 .515-.418.932-.932.932a.933.933 0 01-.932-.932c0-.515.417-.932.932-.932.514 0 .932.417.932.932z"/></svg>; }
+function FbIcon() { return <svg width="12" height="12" viewBox="0 0 24 24" fill="#0084FF"><path d="M12 0C5.373 0 0 4.974 0 11.111c0 3.498 1.744 6.614 4.469 8.654V24l4.088-2.242C9.535 21.99 10.75 22.222 12 22.222c6.627 0 12-4.974 12-11.111C24 4.974 18.627 0 12 0zm1.191 14.963l-3.055-3.26-5.963 3.26L10.732 8l3.131 3.259L19.752 8l-6.561 6.963z"/></svg>; }
+function LcIcon() { return <svg width="12" height="12" viewBox="0 0 24 24" fill="#00BCD4"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>; }
+const ChannelIcons = { whatsapp: WaIcon, instagram: IgIcon, facebook: FbIcon, livechat: LcIcon };
+
+// ── Typing dots ──────────────────────────────────────────────────────────────
+function TypingDots({ t }) {
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 0' }}>
+      <div style={{ width:28, height:28, borderRadius:'50%', background:t.accent+'22', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>{icons.bot(t.accent)}</div>
+      <div style={{ background:t.bgBubbleAI, border:`1px solid ${t.accentBorder}`, borderRadius:'4px 14px 14px 14px', padding:'10px 14px', display:'flex', gap:4, alignItems:'center' }}>
+        {[0,1,2].map(i=><span key={i} style={{ width:5,height:5,borderRadius:'50%',background:t.textMuted,display:'inline-block',animation:`tb 1.2s ${i*0.2}s ease-in-out infinite` }}/>)}
+      </div>
+    </div>
+  );
+}
+
+// ── Avatar ───────────────────────────────────────────────────────────────────
+function Avatar({ initials, color, size = 34 }) {
+  return (
+    <div style={{ width:size, height:size, borderRadius:'50%', background:color+'22', border:`1.5px solid ${color}44`, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:size*0.32, fontWeight:600, color, letterSpacing:0.3 }}>
+      {initials}
+    </div>
+  );
+}
+
+// ── Status pill ──────────────────────────────────────────────────────────────
+function StatusPill({ status, dark }) {
+  const m = STATUS_META[status] || STATUS_META.open;
+  return (
+    <span style={{ fontSize:10.5, fontWeight:600, padding:'2px 7px', borderRadius:999, background: dark ? m.darkBg : m.bg, color: dark ? m.darkColor : m.color, border:`1px solid ${dark ? m.darkBorder : m.border}`, whiteSpace:'nowrap' }}>
+      {m.label}
+    </span>
+  );
+}
+
+// ── Tag pill ─────────────────────────────────────────────────────────────────
+function TagPill({ tag, dark, onRemove }) {
+  const m = TAG_META[tag] || { bg:'#f1f5f9', color:'#475569', darkBg:'rgba(255,255,255,0.08)', darkColor:'#94a3b8' };
+  return (
+    <span style={{ fontSize:11, fontWeight:500, padding:'2px 8px', borderRadius:999, background: dark ? m.darkBg : m.bg, color: dark ? m.darkColor : m.color, display:'inline-flex', alignItems:'center', gap:4 }}>
+      {tag}{onRemove && <button onClick={onRemove} style={{ background:'none', border:'none', cursor:'pointer', color:'inherit', opacity:0.6, fontSize:12, padding:0, lineHeight:1 }}>×</button>}
+    </span>
+  );
+}
+
+// ── Conversation list item ────────────────────────────────────────────────────
+function ConvItem({ conv, active, dark, accent, onClick }) {
+  const [hov, setHov] = useState(false);
+  const t = getTheme(dark, accent);
+  const CIcon = ChannelIcons[conv.channel];
+  const ch = CHANNELS[conv.channel];
+  return (
+    <div onClick={onClick}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+      style={{ padding:'11px 14px', cursor:'pointer', borderBottom:`1px solid ${t.borderLight}`, borderLeft: active ? `3px solid ${accent}` : '3px solid transparent', background: active ? t.bgActive : hov ? t.bgHover : 'transparent', transition:'all 0.12s' }}>
+      <div style={{ display:'flex', gap:10, alignItems:'flex-start' }}>
+        <div style={{ position:'relative', flexShrink:0 }}>
+          <Avatar initials={conv.avatar} color={conv.avatarColor} size={36} />
+          <div style={{ position:'absolute', bottom:-1, right:-1, width:16, height:16, borderRadius:'50%', background: dark ? t.bgPanel : '#fff', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 1px 3px rgba(0,0,0,0.12)' }}><CIcon /></div>
+        </div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:3 }}>
+            <span style={{ fontSize:13, fontWeight: conv.unread > 0 ? 600 : 500, color:t.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:140 }}>{conv.name}</span>
+            <span style={{ fontSize:10.5, color:t.textMuted, flexShrink:0, marginLeft:6 }}>{conv.lastTime}</span>
+          </div>
+          <div style={{ fontSize:12, color:t.textDim, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginBottom:5 }}>{conv.lastMsg}</div>
+          <div style={{ display:'flex', alignItems:'center', gap:5, flexWrap:'wrap' }}>
+            <span style={{ fontSize:10, color:ch.color, background: dark ? ch.color+'18' : ch.bg, borderRadius:4, padding:'1px 5px', fontWeight:500 }}>{ch.label}</span>
+            <StatusPill status={conv.status} dark={dark} />
+            {conv.unread > 0 && <span style={{ marginLeft:'auto', background:accent, color:'#fff', borderRadius:999, fontSize:10, fontWeight:700, minWidth:17, height:17, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 4px' }}>{conv.unread}</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Message bubble ───────────────────────────────────────────────────────────
+function MsgBubble({ msg, dark, accent }) {
+  const t = getTheme(dark, accent);
+  const isCustomer = msg.from === 'customer';
+  const isAI = msg.from === 'ai';
+
+  if (isCustomer) {
+    return (
+      <div style={{ display:'flex', justifyContent:'flex-start', marginBottom:12 }}>
+        <div style={{ maxWidth:'68%' }}>
+          <div style={{ background: t.bgBubbleCustomer, border:`1px solid ${t.border}`, borderRadius:'4px 14px 14px 14px', padding:'10px 14px', fontSize:13.5, color:t.text, lineHeight:1.55, boxShadow:t.shadow }}>
+            {msg.text}
+          </div>
+          <div style={{ fontSize:10.5, color:t.textMuted, marginTop:4, paddingLeft:2 }}>{msg.time}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:12 }}>
+      <div style={{ maxWidth:'68%' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-end', gap:5, marginBottom:4 }}>
+          {isAI ? (
+            <span style={{ fontSize:10.5, fontWeight:600, color: dark ? '#a78bfa' : '#7c3aed', background: dark ? 'rgba(167,139,250,0.12)' : '#f3f0ff', borderRadius:999, padding:'1px 7px', display:'inline-flex', alignItems:'center', gap:3 }}>
+              {icons.sparkle(dark?'#a78bfa':'#7c3aed',9)} AI
+            </span>
+          ) : (
+            <span style={{ fontSize:10.5, fontWeight:500, color: dark ? '#34d399' : '#059669' }}>{msg.agentName || 'Agent'}</span>
+          )}
+          <span style={{ fontSize:10.5, color:t.textMuted }}>{msg.time}</span>
+          {icons.check(t.textMuted)}
+        </div>
+        <div style={{ background: isAI ? t.bgBubbleAI : t.bgBubbleAgent, border: isAI ? `1px solid ${dark?'rgba(139,92,246,0.2)':'rgba(139,92,246,0.15)'}` : `1px solid ${accent}30`, borderRadius:'14px 4px 14px 14px', padding:'10px 14px', fontSize:13.5, color:t.text, lineHeight:1.55, boxShadow:t.shadow }}>
+          {msg.text}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ─────────────────────────────────────────────────────────────────
+function App() {
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const dark = tweaks.darkMode;
+  const accent = tweaks.accentColor;
+  const t = getTheme(dark, accent);
+
+  const [activeId, setActiveId] = useState(1);
+  const [filter, setFilter] = useState('All');
+  const [search, setSearch] = useState('');
+  const [input, setInput] = useState('');
+  const [convs, setConvs] = useState(CONVERSATIONS);
+  const [isTyping, setIsTyping] = useState(false);
+  const [notesMap, setNotesMap] = useState({});
+  const [navActive, setNavActive] = useState('inbox');
+  const [aiSuggest, setAiSuggest] = useState('');
+  const msgContRef = useRef(null);
+  const inputRef = useRef(null);
+
+  const active = convs.find(c => c.id === activeId);
+
+  const filtered = convs.filter(c => {
+    const q = search.toLowerCase();
+    if (q && !c.name.toLowerCase().includes(q) && !c.lastMsg.toLowerCase().includes(q)) return false;
+    if (filter === 'Unread') return c.unread > 0;
+    if (filter === 'Mine') return c.assignedTo === 'Alex R.';
+    if (filter === 'Unassigned') return c.assignedTo === 'Unassigned';
+    return true;
+  });
+
+  useEffect(() => {
+    if (msgContRef.current) msgContRef.current.scrollTop = msgContRef.current.scrollHeight;
+  }, [activeId, convs, isTyping]);
+
+  const handleSelect = (id) => {
+    setActiveId(id);
+    setAiSuggest('');
+    setConvs(prev => prev.map(c => c.id === id ? {...c, unread:0} : c));
+  };
+
+  const handleSend = () => {
+    if (!input.trim()) return;
+    const msg = { id: Date.now(), from:'agent', text:input, time:'Just now', agentName:'Alex R.' };
+    setConvs(prev => prev.map(c => c.id !== activeId ? c : {...c, messages:[...c.messages, msg], lastMsg:input, lastTime:'Just now'}));
+    setInput(''); setAiSuggest('');
+    setTimeout(()=>setIsTyping(true), 700);
+    setTimeout(()=>setIsTyping(false), 3000);
+  };
+
+  const handleSuggest = () => {
+    const suggestions = [
+      "Of course! I'd be happy to help with that. Let me look into it right away and get back to you.",
+      "Absolutely! We offer a 14-day free trial with full access to all Pro features — no credit card required.",
+      "Thank you for the details. I've flagged this for immediate attention and our team will follow up within the hour.",
+    ];
+    const s = suggestions[Math.floor(Math.random() * suggestions.length)];
+    setInput(s); setAiSuggest(s);
+    inputRef.current?.focus();
+  };
+
+  const quickReplies = ["Thanks for reaching out!", "Looking into this now", "Resolved ✓", "Let me check", "Can you share more details?"];
+
+  const totalUnread = convs.reduce((s,c) => s + c.unread, 0);
+
+  const navItems = [
+    { id:'dashboard', icon: icons.dashboard },
+    { id:'inbox',     icon: icons.inbox,    badge: totalUnread > 0 ? totalUnread : null },
+    { id:'contacts',  icon: icons.contacts },
+    { id:'tags',      icon: icons.tags },
+    { id:'reports',   icon: icons.reports },
+  ];
+
+  return (
+    <div style={{ display:'flex', height:'100vh', width:'100vw', background:t.bg, fontSize:tweaks.fontSize, fontFamily:"'Inter', sans-serif", color:t.text }}>
+      <style>{`
+        @keyframes tb { 0%,60%,100%{transform:translateY(0);opacity:.4} 30%{transform:translateY(-4px);opacity:1} }
+        @keyframes fadeUp { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
+        .msg-row { animation: fadeUp 0.18s ease-out both; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: ${t.scrollbar}; border-radius: 4px; }
+        * { scrollbar-width: thin; scrollbar-color: ${t.scrollbar} transparent; }
+        .conv-input:focus { outline: none; }
+        .search-input:focus { outline: none; }
+        .quick-chip:hover { opacity: 0.8; }
+      `}</style>
+
+      {/* ── NAV RAIL ── */}
+      <div style={{ width:56, background:t.navBg, display:'flex', flexDirection:'column', alignItems:'center', paddingTop:14, gap:4, flexShrink:0, zIndex:10 }}>
+        {/* Logo */}
+        <div style={{ width:32, height:32, borderRadius:9, background:`linear-gradient(135deg,${accent},${accent}bb)`, display:'flex', alignItems:'center', justifyContent:'center', marginBottom:16, flexShrink:0 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+        </div>
+        {navItems.map(n => (
+          <button key={n.id} onClick={()=>setNavActive(n.id)} title={n.id} style={{ width:38, height:38, borderRadius:9, border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', background: navActive===n.id ? accent+'33' : 'transparent', position:'relative', transition:'background 0.15s' }}>
+            {n.icon(navActive===n.id ? (dark?'#fff':accent) : t.navIcon)}
+            {n.badge && <span style={{ position:'absolute', top:4, right:4, background:accent, color:'#fff', borderRadius:999, fontSize:8.5, fontWeight:700, minWidth:14, height:14, display:'flex', alignItems:'center', justifyContent:'center', padding:'0 2px' }}>{n.badge}</span>}
+          </button>
+        ))}
+        <div style={{ flex:1 }} />
+        <button onClick={()=>setNavActive('settings')} title="Settings" style={{ width:38, height:38, borderRadius:9, border:'none', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', background:'transparent', marginBottom:8 }}>
+          {icons.settings(t.navIcon)}
+        </button>
+        <div style={{ width:28, height:28, borderRadius:'50%', background:'linear-gradient(135deg,#0f766e,#0d9488)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:700, color:'#fff', marginBottom:12, flexShrink:0 }}>AR</div>
+      </div>
+
+      {/* ── INBOX SIDEBAR ── */}
+      <div style={{ width:300, minWidth:300, background:t.bgSidebar, borderRight:`1px solid ${t.border}`, display:'flex', flexDirection:'column', flexShrink:0 }}>
+        {/* Header */}
+        <div style={{ padding:'16px 16px 10px', borderBottom:`1px solid ${t.border}` }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+            <h2 style={{ fontSize:17, fontWeight:700, color:t.text }}>Inbox</h2>
+            <button style={{ background:'none', border:'none', cursor:'pointer', color:t.textMuted, display:'flex', alignItems:'center', gap:4, fontSize:12 }}>{icons.filter(t.textMuted)}</button>
+          </div>
+          {/* Search */}
+          <div style={{ position:'relative', marginBottom:10 }}>
+            <div style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', pointerEvents:'none' }}>{icons.search(t.textMuted)}</div>
+            <input className="search-input" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search conversations..." style={{ width:'100%', background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:8, padding:'7px 10px 7px 30px', fontSize:12.5, color:t.text, fontFamily:'inherit' }} />
+          </div>
+          {/* Tabs */}
+          <div style={{ display:'flex', gap:4 }}>
+            {['All','Unread','Mine','Unassigned'].map(f => (
+              <button key={f} onClick={()=>setFilter(f)} style={{ flex:1, padding:'5px 0', borderRadius:6, border: filter===f ? `1px solid ${accent}44` : '1px solid transparent', background: filter===f ? t.bgActive : 'transparent', color: filter===f ? accent : t.textMuted, fontSize:11, fontWeight: filter===f ? 600 : 400, cursor:'pointer', fontFamily:'inherit', transition:'all 0.12s' }}>
+                {f}
+                {f==='All' && <span style={{ marginLeft:4, background: filter==='All' ? accent : t.border, color: filter==='All' ? '#fff' : t.textMuted, borderRadius:999, fontSize:9.5, fontWeight:700, padding:'0 4px' }}>{convs.length}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Sort label */}
+        <div style={{ padding:'8px 14px 4px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+          <span style={{ fontSize:11.5, color:t.textMuted }}>Sort by: <strong style={{ color:t.textDim }}>Latest</strong></span>
+        </div>
+        {/* List */}
+        <div style={{ flex:1, overflowY:'auto' }}>
+          {filtered.map(c => <ConvItem key={c.id} conv={c} active={activeId===c.id} dark={dark} accent={accent} onClick={()=>handleSelect(c.id)} />)}
+        </div>
+      </div>
+
+      {/* ── MAIN CHAT ── */}
+      <div style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0, minHeight:0, background:t.bg }}>
+
+        {/* Chat header */}
+        <div style={{ height:60, padding:'0 20px', borderBottom:`1px solid ${t.border}`, display:'flex', alignItems:'center', justifyContent:'space-between', background:t.bgPanel, flexShrink:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+            <Avatar initials={active?.avatar} color={active?.avatarColor} size={36} />
+            <div>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <span style={{ fontSize:14.5, fontWeight:700, color:t.text }}>{active?.name}</span>
+                {isTyping && (
+                  <span style={{ fontSize:11.5, color:'#22c55e', background: dark?'rgba(34,197,94,0.12)':'#f0fdf4', border:'1px solid #bbf7d0', borderRadius:999, padding:'2px 9px', display:'flex', alignItems:'center', gap:5 }}>
+                    <span style={{ width:6, height:6, borderRadius:'50%', background:'#22c55e', display:'inline-block', animation:'tb 1.2s ease-in-out infinite' }} /> typing…
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize:11.5, color:t.textMuted }}>{active?.handle} · <span style={{ color:CHANNELS[active?.channel]?.color }}>{CHANNELS[active?.channel]?.label}</span></div>
+            </div>
+          </div>
+          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+            <StatusPill status={active?.status} dark={dark} />
+            <div style={{ width:1, height:20, background:t.border }} />
+            {['active','pending','resolved','urgent'].map(s => (
+              <button key={s} onClick={()=>setConvs(prev=>prev.map(c=>c.id===activeId?{...c,status:s}:c))} style={{ padding:'4px 9px', borderRadius:6, border:`1px solid ${t.border}`, background: active?.status===s ? t.bgActive : 'transparent', color: active?.status===s ? accent : t.textDim, fontSize:11, cursor:'pointer', fontFamily:'inherit', textTransform:'capitalize', transition:'all 0.12s' }}>{s}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div ref={msgContRef} style={{ flex:1, overflowY:'auto', padding:'20px 24px 12px', minHeight:0 }}>
+          {active?.messages.map((msg,i) => (
+            <div key={msg.id} className="msg-row" style={{ animationDelay:`${i*0.03}s` }}>
+              <MsgBubble msg={msg} dark={dark} accent={accent} />
+            </div>
+          ))}
+          {isTyping && <TypingDots t={t} />}
+        </div>
+
+        {/* AI suggestion strip */}
+        {aiSuggest && (
+          <div style={{ margin:'0 20px 8px', background: dark?'rgba(91,94,244,0.1)':'#f3f0ff', border:`1px solid ${dark?accent+'30':accent+'30'}`, borderRadius:10, padding:'9px 13px', display:'flex', gap:8, alignItems:'flex-start' }}>
+            {icons.sparkle(accent)}
+            <span style={{ fontSize:12, color: dark?'#c4b5fd':'#7c3aed', flex:1, lineHeight:1.5 }}>{aiSuggest}</span>
+            <button onClick={()=>setAiSuggest('')} style={{ background:'none', border:'none', cursor:'pointer', color:t.textMuted, fontSize:15, padding:0, lineHeight:1 }}>×</button>
+          </div>
+        )}
+
+        {/* Quick replies */}
+        <div style={{ padding:'0 20px 8px', display:'flex', gap:6, flexWrap:'wrap' }}>
+          <span style={{ fontSize:11.5, color:t.textMuted, alignSelf:'center', marginRight:2 }}>Quick replies:</span>
+          {quickReplies.map(qr => (
+            <button key={qr} className="quick-chip" onClick={()=>setInput(qr)} style={{ fontSize:11.5, padding:'4px 10px', borderRadius:999, background: dark?t.bgInput:t.pillBg, border:`1px solid ${t.border}`, color:t.textDim, cursor:'pointer', fontFamily:'inherit', transition:'opacity 0.12s' }}>{qr}</button>
+          ))}
+        </div>
+
+        {/* Input area */}
+        <div style={{ padding:'0 20px 18px', flexShrink:0 }}>
+          <div style={{ background:t.bgPanel, border:`1.5px solid ${t.border}`, borderRadius:12, overflow:'hidden', boxShadow:t.shadow }}>
+            <textarea ref={inputRef} className="conv-input" value={input} onChange={e=>setInput(e.target.value)}
+              onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();handleSend();} }}
+              placeholder={`Type your message…`} rows={2}
+              style={{ width:'100%', background:'transparent', border:'none', padding:'12px 14px 6px', fontSize:13.5, color:t.text, fontFamily:'inherit', resize:'none', outline:'none', lineHeight:1.5, maxHeight:100, overflowY:'auto' }}
+            />
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'6px 10px 8px' }}>
+              <div style={{ display:'flex', gap:2 }}>
+                {[icons.attach, icons.emoji, icons.mention].map((ic,i) => (
+                  <button key={i} style={{ width:30, height:30, borderRadius:7, border:'none', background:'transparent', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', color:t.textMuted, transition:'background 0.1s' }} onMouseEnter={e=>e.currentTarget.style.background=t.bgHover} onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                    {ic(t.textMuted)}
+                  </button>
+                ))}
+                <div style={{ width:1, height:20, background:t.border, alignSelf:'center', margin:'0 4px' }} />
+                <button onClick={handleSuggest} style={{ height:28, padding:'0 10px', borderRadius:7, border:`1px solid ${accent}44`, background: dark?accent+'18':accent+'12', color:accent, fontSize:11.5, fontWeight:600, cursor:'pointer', fontFamily:'inherit', display:'flex', alignItems:'center', gap:5, transition:'background 0.12s' }}>
+                  {icons.sparkle(accent,11)} AI Assist
+                </button>
+              </div>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:6, background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:7, padding:'4px 8px' }}>
+                  <span style={{ fontSize:11.5, color:t.textDim, fontWeight:500 }}>Reply</span>
+                  {icons.chevron(t.textMuted)}
+                </div>
+                <button onClick={handleSend} style={{ height:34, padding:'0 18px', borderRadius:8, border:'none', background: input.trim() ? `linear-gradient(135deg,${accent},${accent}cc)` : t.bgInput, color: input.trim() ? '#fff' : t.textMuted, fontSize:13, fontWeight:600, cursor: input.trim() ? 'pointer' : 'default', fontFamily:'inherit', display:'flex', alignItems:'center', gap:7, boxShadow: input.trim() ? `0 3px 10px ${accent}44` : 'none', transition:'all 0.15s' }}>
+                  {icons.send(input.trim()?'#fff':t.textMuted)} Send
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── RIGHT PANEL ── */}
+      <div style={{ width:268, minWidth:268, background:t.bgPanel, borderLeft:`1px solid ${t.border}`, display:'flex', flexDirection:'column', overflowY:'auto', flexShrink:0 }}>
+        {/* Customer header */}
+        <div style={{ padding:'18px 16px 14px', borderBottom:`1px solid ${t.border}` }}>
+          <div style={{ fontSize:12, fontWeight:700, color:t.textMuted, textTransform:'uppercase', letterSpacing:0.7, marginBottom:12 }}>Customer Details</div>
+          <div style={{ display:'flex', gap:10, alignItems:'center', marginBottom:12 }}>
+            <Avatar initials={active?.avatar} color={active?.avatarColor} size={42} />
+            <div>
+              <div style={{ fontSize:14, fontWeight:700, color:t.text }}>{active?.name}</div>
+              <div style={{ fontSize:11.5, color:t.textMuted }}>Active customer</div>
+            </div>
+          </div>
+          {[
+            { icon:'✉', val: active?.handle },
+            { icon:'📱', val: CHANNELS[active?.channel]?.label },
+            { icon:'🕐', val: 'Customer since Jan 2024' },
+          ].map((row,i)=>(
+            <div key={i} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+              <span style={{ fontSize:12 }}>{row.icon}</span>
+              <span style={{ fontSize:12, color:t.textDim }}>{row.val}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Assigned Agent */}
+        <div style={{ padding:'12px 16px', borderBottom:`1px solid ${t.border}` }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+            <span style={{ fontSize:11.5, fontWeight:700, color:t.textMuted, textTransform:'uppercase', letterSpacing:0.6 }}>Assigned Agent</span>
+            <button style={{ fontSize:11.5, color:accent, fontWeight:600, background:'none', border:'none', cursor:'pointer', fontFamily:'inherit' }}>Change</button>
+          </div>
+          <div style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 10px', background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:8 }}>
+            <div style={{ width:28, height:28, borderRadius:'50%', background:'linear-gradient(135deg,#0f766e,#0d9488)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:700, color:'#fff', flexShrink:0 }}>AR</div>
+            <div>
+              <div style={{ fontSize:12.5, fontWeight:600, color:t.text }}>{active?.assignedTo !== 'Unassigned' ? active?.assignedTo : '—'}</div>
+              <div style={{ fontSize:11, color:'#22c55e', display:'flex', alignItems:'center', gap:4 }}>
+                <span style={{ width:5, height:5, borderRadius:'50%', background:'#22c55e', display:'inline-block' }} /> Online
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Status */}
+        <div style={{ padding:'12px 16px', borderBottom:`1px solid ${t.border}` }}>
+          <div style={{ fontSize:11.5, fontWeight:700, color:t.textMuted, textTransform:'uppercase', letterSpacing:0.6, marginBottom:8 }}>Status</div>
+          <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
+            {Object.entries(STATUS_META).map(([key, m]) => (
+              <button key={key} onClick={()=>setConvs(prev=>prev.map(c=>c.id===activeId?{...c,status:key}:c))} style={{ padding:'7px 12px', borderRadius:8, border:`1px solid ${active?.status===key ? (dark?m.darkBorder:m.border) : t.border}`, background: active?.status===key ? (dark?m.darkBg:m.bg) : 'transparent', color: active?.status===key ? (dark?m.darkColor:m.color) : t.textDim, fontSize:12.5, fontWeight: active?.status===key ? 600 : 400, cursor:'pointer', fontFamily:'inherit', textAlign:'left', transition:'all 0.12s' }}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Tags */}
+        <div style={{ padding:'12px 16px', borderBottom:`1px solid ${t.border}` }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+            <span style={{ fontSize:11.5, fontWeight:700, color:t.textMuted, textTransform:'uppercase', letterSpacing:0.6 }}>Tags</span>
+            <button style={{ fontSize:11.5, color:accent, fontWeight:600, background:'none', border:'none', cursor:'pointer', fontFamily:'inherit' }}>+ Add</button>
+          </div>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:5 }}>
+            {active?.tags.map(tag=>(
+              <TagPill key={tag} tag={tag} dark={dark}
+                onRemove={()=>setConvs(prev=>prev.map(c=>c.id===activeId?{...c,tags:c.tags.filter(t=>t!==tag)}:c))} />
+            ))}
+          </div>
+        </div>
+
+        {/* AI Summary */}
+        <div style={{ padding:'12px 16px', borderBottom:`1px solid ${t.border}` }}>
+          <div style={{ display:'flex', alignItems:'center', gap:5, marginBottom:8 }}>
+            {icons.sparkle(accent)}
+            <span style={{ fontSize:11.5, fontWeight:700, color:t.textMuted, textTransform:'uppercase', letterSpacing:0.6 }}>AI Summary</span>
+          </div>
+          <div style={{ fontSize:12, color:t.textDim, lineHeight:1.6, background: dark?accent+'0d':accent+'08', border:`1px solid ${accent}22`, borderRadius:8, padding:'8px 10px' }}>
+            {active?.tags?.includes('Lead') ? 'Qualified lead with high purchase intent. Asking about pricing. Recommend demo offer.' : 'Support case requiring follow-up. Customer issue still unresolved. Consider escalation.'}
+          </div>
+        </div>
+
+        {/* Notes */}
+        <div style={{ padding:'12px 16px', flex:1 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8 }}>
+            {icons.note(t.textMuted)}
+            <span style={{ fontSize:11.5, fontWeight:700, color:t.textMuted, textTransform:'uppercase', letterSpacing:0.6 }}>Internal Notes</span>
+            <span style={{ marginLeft:'auto', fontSize:9.5, background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:4, padding:'1px 5px', color:t.textMuted }}>Private</span>
+          </div>
+          <textarea value={notesMap[activeId]??active?.notes??''} onChange={e=>setNotesMap(p=>({...p,[activeId]:e.target.value}))}
+            placeholder="Add private notes…" style={{ width:'100%', minHeight:80, background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:8, padding:'8px 10px', color:t.text, fontSize:12, fontFamily:'inherit', resize:'none', outline:'none', lineHeight:1.6 }} />
+        </div>
+      </div>
+
+      {/* ── TWEAKS ── */}
+      <TweaksPanel>
+        <TweakSection label="Theme">
+          <TweakToggle label="Dark mode" value={tweaks.darkMode} onChange={v=>setTweak('darkMode',v)} />
+        </TweakSection>
+        <TweakSection label="Accent color">
+          <TweakColor label="Color" value={tweaks.accentColor} onChange={v=>setTweak('accentColor',v)} />
+        </TweakSection>
+        <TweakSection label="Typography">
+          <TweakSlider label="Font size" value={tweaks.fontSize} min={11} max={16} step={0.5} unit="px" onChange={v=>setTweak('fontSize',v)} />
+        </TweakSection>
+      </TweaksPanel>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>

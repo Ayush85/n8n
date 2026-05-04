@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\thapa\\\\dev\\\\n8n\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\thapa\\\\dev\\\\n8n\\\\api\" -Recurse -Depth 3 | Where-Object { -not $_.FullName.Contains\\('node_modules'\\) } | Select-Object Name, PSIsContainer, FullName | Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\thapa\\\\dev\\\\n8n\\\\dashboard\" -Recurse -Depth 3 | Where-Object { -not $_.FullName.Contains\\('node_modules'\\) } | Select-Object Name, PSIsContainer, FullName | Format-Table -AutoSize)",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}
