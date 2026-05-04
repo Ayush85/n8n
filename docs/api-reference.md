@@ -123,7 +123,7 @@ Response:
 
 ## Users
 
-### `POST /api/auth/login`
+### `POST /api/users/login`
 Create or update user, optionally link a session.
 
 ### `GET /api/users/:userId`

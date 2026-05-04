@@ -753,7 +753,8 @@ app.post('/api/sessions/new', async (req: Request, res: Response, next: NextFunc
 
 // ── Users / Auth ──────────────────────────────────────────────────────────────
 
-app.post('/api/auth/login', async (req: Request, res: Response, next: NextFunction) => {
+// POST /api/users/login — customer/user login
+app.post('/api/users/login', async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { email, phone, name, sessionId } = req.body as {
             email?: string; phone?: string; name?: string; sessionId?: string;
