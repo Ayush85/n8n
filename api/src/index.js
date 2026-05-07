@@ -543,7 +543,7 @@ app.post('/api/chat', async (req, res, next) => {
     try {
         const { action, sessionId, chatInput, metadata } = req.body;
 
-        logger.info(`Proxying chat request to n8n for session ${sessionId}`);
+        logger.info(`Chat request for session ${sessionId}`);
 
         // Check if user wants to chat with human
         if (isHumanHandoffRequest(chatInput)) {
@@ -599,72 +599,40 @@ app.post('/api/chat', async (req, res, next) => {
             });
         }
 
-        // Forward request to n8n webhook
-
-        // Forward request to n8n webhook
+        // Forward request to RAG API - simplified format
+        logger.info(`Sending to RAG API: ${N8N_WEBHOOK_URL} for session ${sessionId}`);
+        
         const response = await fetch(N8N_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                action: action || 'sendMessage',
-                sessionId,
-                client_id: metadata.client_id,
-                chatInput,
-                metadata
+                session_id: sessionId,
+                query: chatInput
             })
         });
 
         if (!response.ok) {
-            logger.error(`N8N webhook error: ${response.status} ${response.statusText}`);
+            const errorText = await response.text();
+            logger.error(`RAG API error: ${response.status} ${response.statusText} - ${errorText}`);
             return res.status(502).json({ error: 'AI service unavailable', status: response.status });
         }
 
-        const responseText = await response.text();
-        logger.info(`N8N response received for session ${sessionId}`);
+        const data = await response.json();
+        logger.info(`RAG response received for session ${sessionId}:`, JSON.stringify(data).substring(0, 200));
 
-        let actualMessage;
-        let suggestions = [];
+        // Extract fields directly from RAG response
+        const output = formatMessage(data.output || data.answer || 'No response received');
+        const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+        const sources = Array.isArray(data.sources) ? data.sources : [];
 
-        // Detect n8n streaming SSE format: multiple JSON lines with {type, content}
-        const isStreaming = responseText.includes('"type":"item"') || responseText.includes('"type":"begin"');
+        logger.info(`Parsed RAG response: ${output.substring(0, 100)}...`);
 
-        if (isStreaming) {
-            // Collect all "item" content chunks and assemble the full message
-            const lines = responseText.split('\n').filter(l => l.trim());
-            let assembled = '';
-            for (const line of lines) {
-                try {
-                    const chunk = JSON.parse(line);
-                    if (chunk.type === 'item' && typeof chunk.content === 'string') {
-                        assembled += chunk.content;
-                    }
-                } catch (_) { /* skip malformed lines */ }
-            }
-            // assembled is the raw JSON string e.g. {"output":"Hey!...","suggestions":[...]}
-            try {
-                const parsed = JSON.parse(assembled);
-                actualMessage = formatMessage(parsed.output || parsed.answer || parsed.response || assembled);
-                suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
-            } catch (_) {
-                actualMessage = formatMessage(assembled);
-            }
-        } else {
-            // Standard JSON response
-            let data;
-            try {
-                data = JSON.parse(responseText);
-            } catch (e) {
-                data = responseText;
-            }
-            actualMessage = parseN8nResponse(data);
-            const rawSuggestions = Array.isArray(data) ? data[0]?.suggestions : data?.suggestions;
-            suggestions = Array.isArray(rawSuggestions) ? rawSuggestions : [];
-        }
-
-        logger.info(`Parsed message from n8n:`, actualMessage);
-
-        // Return in a consistent format
-        res.json({ output: actualMessage, suggestions });
+        // Return exactly what RAG sent (with formatting applied)
+        res.json({ 
+            output,
+            suggestions,
+            sources
+        });
     } catch (error) {
         logger.error('Error proxying to n8n:', error);
         next(error);
