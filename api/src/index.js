@@ -821,16 +821,17 @@ app.post('/api/chat', async (req, res) => {
             });
         }
 
-        const RAG_API_URL = process.env.RAG_API_URL;
-
-        const response = await fetch(`${RAG_API_URL}/chat`, {
+        const response = await fetch(N8N_WEBHOOK_URL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                session_id: sessionId,
-                query: chatInput
+                action: 'sendMessage',
+                sessionId,
+                client_id: metadata?.client_id,
+                chatInput,
+                metadata
             })
         });
 
@@ -840,11 +841,26 @@ app.post('/api/chat', async (req, res) => {
             });
         }
 
-        const data = await response.json();
+        const text = await response.text();
 
-        // RAG API returns {session_id, output, suggestions, sources, used_tools, from_cache, latency_ms}
-        const output = data.output || '';
-        const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+        // STREAM PARSE ONLY
+        const lines = text.split('\n');
+
+        let assembled = '';
+
+        for (const line of lines) {
+            if (!line.includes('"type":"item"')) continue;
+
+            try {
+                const json = JSON.parse(line);
+                assembled += json.content || '';
+            } catch (_) {}
+        }
+
+        const ai = JSON.parse(assembled);
+
+        const output = ai.output || '';
+        const suggestions = ai.suggestions || [];
 
         // instant emit
         io.to(sessionId).emit('new_message', {
