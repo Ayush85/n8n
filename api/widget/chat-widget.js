@@ -1660,11 +1660,10 @@
         const humanChip = document.createElement('button');
         humanChip.type = 'button';
         humanChip.className = 'n8n-suggestion-chip human';
-        humanChip.textContent = '👤 Chat with Human';
+        humanChip.textContent = '💬 Talk to a Person on WhatsApp';
         humanChip.addEventListener('click', () => {
             clearSuggestions();
-            chatInput.value = 'Chat with human';
-            chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+            window.open('https://wa.me/+9779813001000?text=Hi!%20I%20need%20help%20from%20a%20human%20agent.', '_blank', 'noopener,noreferrer');
         });
         suggestionsEl.appendChild(humanChip);
         suggestionsEl.classList.remove('hidden');
@@ -1682,12 +1681,15 @@
             chip.type = 'button';
             const isHuman = text === '__HUMAN__';
             chip.className = 'n8n-suggestion-chip' + (isHuman ? ' human' : '');
-            chip.textContent = isHuman ? '👤 Chat with Human' : text;
+            chip.textContent = isHuman ? '💬 Talk to a Person on WhatsApp' : text;
             chip.addEventListener('click', () => {
                 clearSuggestions();
-                const msg = isHuman ? 'Chat with human' : text;
-                chatInput.value = msg;
-                chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+                if (isHuman) {
+                    window.open('https://wa.me/+9779813001000?text=Hi!%20I%20need%20help%20from%20a%20human%20agent.', '_blank', 'noopener,noreferrer');
+                } else {
+                    chatInput.value = text;
+                    chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+                }
             });
             suggestionsEl.appendChild(chip);
         });
