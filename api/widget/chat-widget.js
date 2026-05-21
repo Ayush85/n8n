@@ -40,7 +40,7 @@
     // ============================================
     let socket = null;
     let sessionId = localStorage.getItem('n8n_chat_session_id') || 'sess_' + Math.random().toString(36).substr(2, 9);
-    let sessionMode = localStorage.getItem('n8n_chat_mode') || 'ai'; // 'ai' or 'human'
+    let sessionMode = 'ai'; // always AI; human contact is via WhatsApp
     let isTyping = false;
     let userInfo = JSON.parse(localStorage.getItem('n8n_chat_user_info') || 'null'); // {email, phone, name}
     let alertAudioCtx = null;
@@ -1144,10 +1144,10 @@
         localStorage.setItem('n8n_chat_session_id', sessionId);
         syncPushIdentity();
 
-        // Update mode
-        sessionMode = status;
-        localStorage.setItem('n8n_chat_mode', status);
-        setMode(status);
+        // Mode is always AI; human handoff is via WhatsApp
+        sessionMode = 'ai';
+        localStorage.setItem('n8n_chat_mode', 'ai');
+        setMode('ai');
 
         // Join new socket room
         if (socket) {
@@ -2061,72 +2061,45 @@
             setUserMessageStatus(localId, 'Failed');
         }
 
-        // Check if user wants to chat with human
-        const humanPhrases = ['chat with human', 'talk to human', 'speak with human', 'human agent', 'real person', 'live agent', 'talk to someone', 'human support'];
-        const wantsHuman = humanPhrases.some(phrase => content.toLowerCase().includes(phrase));
+        // AI MODE: always send to n8n webhook
+        showTypingIndicator();
+        try {
+            const aiResponse = await sendToN8nAI(content);
+            removeTypingIndicator();
 
-        if (sessionMode === 'ai') {
-            // AI MODE: Send to n8n webhook
-            showTypingIndicator();
-            try {
-                const aiResponse = await sendToN8nAI(content);
-                removeTypingIndicator();
-
-                if (aiResponse && aiResponse.output) {
-                    // Display AI response
-                    addMessage('ai', aiResponse.output);
+            if (aiResponse && aiResponse.output) {
+                addMessage('ai', aiResponse.output);
+                lastAiMessage = {
+                    content: aiResponse.output.trim(),
+                    at: Date.now()
+                };
+                if (Array.isArray(aiResponse.suggestions) && aiResponse.suggestions.length > 0) {
+                    showSuggestions([...aiResponse.suggestions.slice(0, 2), '__HUMAN__']);
+                } else {
+                    showHumanSuggestionOnly();
+                }
+                if (!aiResponse.saved) {
+                    await saveMessageToDB('ai', aiResponse.output);
+                }
+            } else {
+                throw new Error('Invalid AI response');
+            }
+        } catch (err) {
+            removeTypingIndicator();
+            if (err && (err.status === 504 || /timed out/i.test(err.message || ''))) {
+                const recovered = await pollForAiReply(lastAiMessage.content || content);
+                if (recovered?.content) {
+                    addMessage('ai', recovered.content, recovered.created_at || null);
                     lastAiMessage = {
-                        content: aiResponse.output.trim(),
+                        content: recovered.content.trim(),
                         at: Date.now()
                     };
-                    // Suggestions always come from the API (generated server-side from products DB)
-                    if (!(aiResponse.handoff || wantsHuman)) {
-                        if (Array.isArray(aiResponse.suggestions) && aiResponse.suggestions.length > 0) {
-                            showSuggestions([...aiResponse.suggestions.slice(0, 2), '__HUMAN__']);
-                        } else {
-                            showHumanSuggestionOnly();
-                        }
-                    }
-
-                    // Save AI response to database only if not already saved by API
-                    if (!aiResponse.saved) {
-                        await saveMessageToDB('ai', aiResponse.output);
-                    }
-
-                    // Check if this is a human handoff response
-                    if (aiResponse.handoff || wantsHuman) {
-                        setMode('human', true); // Sync to server
-                        addSystemMessage(
-                            '🔄 Switched to human support mode. Our team will respond shortly!<br><br>' +
-                            '📱 Or reach us directly on WhatsApp:<br>' +
-                            '<a href="https://wa.me/+9779813001000?text=Hi!" target="_blank" rel="noopener noreferrer">+977 9813001000</a>',
-                            true
-                        );
-                    }
                 } else {
-                    throw new Error('Invalid AI response');
+                    addSystemMessage('⏳ AI is still working. The reply may appear shortly.');
                 }
-            } catch (err) {
-                removeTypingIndicator();
-                if (err && (err.status === 504 || /timed out/i.test(err.message || ''))) {
-                    const recovered = await pollForAiReply(lastAiMessage.content || content);
-                    if (recovered?.content) {
-                        addMessage('ai', recovered.content, recovered.created_at || null);
-                        lastAiMessage = {
-                            content: recovered.content.trim(),
-                            at: Date.now()
-                        };
-                    } else {
-                        addSystemMessage('⏳ AI is still working. The reply may appear shortly.');
-                    }
-                } else {
-                    addSystemMessage('⚠️ AI unavailable. Connecting to human support...');
-                    setMode('human');
-                }
+            } else {
+                addSystemMessage('⚠️ AI is currently unavailable. Please try again shortly.');
             }
-        } else {
-            // HUMAN MODE: Message already saved, will be picked up by dashboard via socket
-            statusText.textContent = 'Message sent • Waiting for response...';
         }
 
         setLoading(false);
@@ -2188,12 +2161,8 @@
             })
             .catch(err => console.error('Failed to load history:', err));
 
-        // Listen for status changes (e.g. from admin)
-        socket.on('status_change', (data) => {
-            if (data.sessionId === sessionId) {
-                setMode(data.status);
-            }
-        });
+        // Status changes ignored — mode is always AI
+        socket.on('status_change', (_data) => {});
 
         // Listen for new messages (from human agents)
         socket.on('new_message', (msg) => {
@@ -2215,9 +2184,8 @@
 
             if (msg.sessionId === sessionId && msg.sender === 'admin') {
                 addMessage('admin', msg.content);
-                clearSuggestions(); // No AI chips in human mode
+                clearSuggestions();
                 statusText.textContent = 'Agent replied • Connected';
-                setMode('human'); // Automatically switch to human mode if admin replies
                 playHumanAlertSound();
                 markPendingUserMessagesSeen();
                 // Browser notification + unread badge when chat is closed
